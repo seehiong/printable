@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="printable">
+  <title>printable</title>
+  <!-- Deep slate tile rather than teal: a teal block on a teal ground has
+       too little contrast to read at 16px. -->
+  <rect width="128" height="128" rx="27" fill="#0f172a"/>
+  <g>
+    <polygon points="73.2,34.6 61.7,41.3 89.4,57.3" fill="#5eead4" stroke="#5eead4" stroke-width="1.2"/>
+    <polygon points="101.0,77.3 89.4,57.3 89.4,84.0" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="101.0,50.6 73.2,34.6 89.4,57.3" fill="#5eead4" stroke="#5eead4" stroke-width="1.2"/>
+    <polygon points="101.0,77.3 101.0,50.6 89.4,57.3" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="89.4,84.0 77.9,64.0 77.9,90.7" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="50.1,34.6 50.1,48.0 77.9,64.0" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="54.8,104.1 27.0,74.7 27.0,88.0" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="77.9,50.6 89.4,84.0 89.4,57.3" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="66.3,84.0 66.3,97.4 77.9,90.7" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="77.9,50.6 61.7,27.9 50.1,34.6" fill="#5eead4" stroke="#5eead4" stroke-width="1.2"/>
+    <polygon points="66.3,70.7 50.1,48.0 38.6,54.7" fill="#5eead4" stroke="#5eead4" stroke-width="1.2"/>
+    <polygon points="66.3,70.7 38.6,54.7 38.6,68.0" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="54.8,90.7 38.6,68.0 27.0,74.7" fill="#5eead4" stroke="#5eead4" stroke-width="1.2"/>
+    <polygon points="77.9,50.6 77.9,64.0 89.4,84.0" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="77.9,50.6 89.4,44.0 61.7,27.9" fill="#5eead4" stroke="#5eead4" stroke-width="1.2"/>
+    <polygon points="66.3,70.7 77.9,64.0 50.1,48.0" fill="#5eead4" stroke="#5eead4" stroke-width="1.2"/>
+    <polygon points="66.3,70.7 38.6,68.0 66.3,84.0" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="54.8,90.7 66.3,84.0 38.6,68.0" fill="#5eead4" stroke="#5eead4" stroke-width="1.2"/>
+    <polygon points="66.3,70.7 77.9,90.7 77.9,64.0" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="66.3,70.7 66.3,84.0 77.9,90.7" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="77.9,50.6 50.1,34.6 77.9,64.0" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="54.8,104.1 54.8,90.7 27.0,74.7" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="77.9,50.6 89.4,57.3 89.4,44.0" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="54.8,90.7 66.3,97.4 66.3,84.0" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+    <polygon points="54.8,104.1 66.3,97.4 54.8,90.7" fill="#0f766e" stroke="#0f766e" stroke-width="1.2"/>
+  </g>
+</svg>

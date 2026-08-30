@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # The CPU pipeline is the part CI can actually exercise: the AI backends
+    # need GPUs and multi-gigabyte weights, so they are covered by the
+    # availability checks rather than by real generation.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Install
+        run: uv sync
+
+      - name: Lint
+        run: uv run ruff check src/ tests/ tools/
+
+      - name: Test
+        run: uv run pytest -q
+
+      - name: Smoke test the CLI
+        shell: bash
+        run: |
+          uv run python -c "
+          import numpy as np
+          from PIL import Image
+          n = 128
+          y, x = np.mgrid[0:n, 0:n]
+          img = np.clip(255 - np.hypot(x - n/2, y - n/2) * 3, 0, 255)
+          Image.fromarray(img.astype('uint8')).convert('RGB').save('ci.png')
+          "
+          uv run printable backends
+          uv run printable generate ci.png -b lithophane --size 60 -o ci.stl
+          uv run printable inspect ci.stl

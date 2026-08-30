@@ -1,0 +1,12 @@
+# Normalise line endings so the repo is consistent across Windows and Linux.
+# Without this, files land in whatever ending the tool that wrote them used,
+# which produces whole-file diffs when the other machine touches them.
+* text=auto eol=lf
+
+# Binary assets must never be munged.
+*.png binary
+*.jpg binary
+*.stl binary
+*.glb binary
+*.ckpt binary
+*.safetensors binary

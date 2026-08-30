@@ -1,0 +1,10 @@
+{
+  // Bare .venv resolves on both platforms: VS Code finds Scripts/python.exe on
+  // Windows and bin/python on Linux. Pinning the full path breaks the other OS.
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
+  "python.analysis.extraPaths": ["${workspaceFolder}/src"],
+  "python.analysis.autoImportCompletions": true,
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": ["tests"],
+  "files.eol": "\n"
+}

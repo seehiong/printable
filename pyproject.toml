@@ -1,0 +1,74 @@
+[project]
+name = "printable"
+version = "0.1.0"
+description = "Turn a photo into a 3D-printable STL"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "See Hiong", email = "seehiong@gmail.com" }]
+keywords = ["3d-printing", "stl", "mesh", "lithophane", "image-to-3d"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Programming Language :: Python :: 3",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "trimesh>=4.0",
+    "pillow>=10.0",
+    "scipy>=1.10",
+    # trimesh 5.x made these optional, but its repair/split/boolean paths
+    # need them. Not truly optional for us.
+    "networkx>=3.0",
+    "rtree>=1.0",
+    # Backs trimesh's quadric decimation. Without it --max-faces silently
+    # does nothing, which matters a lot for AI meshes.
+    "fast-simplification>=0.1.7",
+    # Boolean backend for trimesh. add_base and hollow are booleans and both
+    # are on by default, so without this the base silently fails to union and
+    # the result exports as several disconnected bodies.
+    "manifold3d>=2.3",
+]
+
+[project.optional-dependencies]
+# Mesh repair extras: Poisson reconstruction and manifold booleans.
+repair = ["open3d>=0.18"]
+# Background removal. Big quality win for the AI backends.
+preprocess = ["rembg[cpu]>=2.0", "onnxruntime>=1.16"]
+# LAN web API + browser UI (`printable serve`). python-multipart is required
+# explicitly: FastAPI's file-upload parsing fails at request time, not import
+# time, without it.
+api = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+]
+spec = [
+    "httpx>=0.27",
+]
+# Depth/normal geometry-cues stage. transformers-native -- no separate
+# vendored repo, unlike the AI backends in backends/ai.py.
+depth = [
+    "transformers>=4.49",
+]
+
+[project.scripts]
+printable = "printable.cli.main:main"
+
+[dependency-groups]
+dev = ["pytest>=7.4", "ruff>=0.4"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/printable"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

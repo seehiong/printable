@@ -1,0 +1,1657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Print Bed — generate</title>
+<meta name="description" content="Upload a photo, generate a printable STL, and watch it come off the print bed. Part of printable (github.com/seehiong/printable).">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%2317181c'/%3E%3Ctext x='50' y='68' font-size='58' text-anchor='middle'%3E%F0%9F%96%A8%EF%B8%8F%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+  /* Same dark-first token system as docs/index.html -- kept in sync
+     deliberately, this is the same visual product. */
+  :root {
+    --bg: #17181c;
+    --surface: #1e2025;
+    --surface-2: #292b32;
+    --border: #383a43;
+    --text: #e9e7e1;
+    --text-dim: #93949c;
+    --text-faint: #5c5e67;
+    --accent: #ff8a3d;
+    --accent-strong: #ffab6e;
+    --accent-ink: #201200;
+    --ok: #5ecf95;
+    --ok-bg: rgba(94, 207, 149, 0.12);
+    --error: #ff6b6b;
+    --error-bg: rgba(255, 107, 107, 0.12);
+    --grid-line: rgba(255, 255, 255, 0.07);
+    --grid-line-strong: rgba(255, 255, 255, 0.14);
+    --canvas-bg-top: #202226;
+    --canvas-bg-bottom: #131417;
+    --shadow: rgba(0, 0, 0, 0.4);
+
+    --font-display: "Big Shoulders Display", "Arial Narrow", sans-serif;
+    --font-body: "IBM Plex Sans", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f1efe9; --surface: #fbfaf7; --surface-2: #e8e5dc; --border: #d6d2c6;
+      --text: #201f1c; --text-dim: #6b695f; --text-faint: #a19d8f;
+      --accent: #c05e12; --accent-strong: #954309; --accent-ink: #fff6ec;
+      --ok: #1f8b56; --ok-bg: rgba(31, 139, 86, 0.1);
+      --error: #c23b3b; --error-bg: rgba(194, 59, 59, 0.09);
+      --grid-line: rgba(0, 0, 0, 0.07); --grid-line-strong: rgba(0, 0, 0, 0.15);
+      --canvas-bg-top: #e4e1d8; --canvas-bg-bottom: #d3cfc2;
+      --shadow: rgba(60, 55, 40, 0.14);
+    }
+  }
+
+  :root[data-theme="light"] {
+    --bg: #f1efe9; --surface: #fbfaf7; --surface-2: #e8e5dc; --border: #d6d2c6;
+    --text: #201f1c; --text-dim: #6b695f; --text-faint: #a19d8f;
+    --accent: #c05e12; --accent-strong: #954309; --accent-ink: #fff6ec;
+    --ok: #1f8b56; --ok-bg: rgba(31, 139, 86, 0.1);
+    --error: #c23b3b; --error-bg: rgba(194, 59, 59, 0.09);
+    --grid-line: rgba(0, 0, 0, 0.07); --grid-line-strong: rgba(0, 0, 0, 0.15);
+    --canvas-bg-top: #e4e1d8; --canvas-bg-bottom: #d3cfc2;
+    --shadow: rgba(60, 55, 40, 0.14);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font-body); display: flex; flex-direction: column; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  header {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 20px;
+    padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--border); z-index: 10;
+  }
+  .wordmark {
+    display: flex; align-items: baseline; gap: 8px; font-family: var(--font-display);
+    font-weight: 700; font-size: 22px; letter-spacing: 0.01em; text-wrap: balance; color: var(--text); white-space: nowrap;
+  }
+  .wordmark .dot { color: var(--accent); }
+  .wordmark small { font-family: var(--font-mono); font-weight: 400; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); }
+
+  .toolbar { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+  .btn {
+    font-family: var(--font-body); font-size: 13px; font-weight: 500; color: var(--text);
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 7px;
+    transition: border-color 0.12s ease, background 0.12s ease;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn:active { background: var(--border); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  .btn.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+  .btn.primary:disabled { background: var(--surface-2); color: var(--text-faint); border-color: var(--border); }
+  .btn svg { width: 15px; height: 15px; flex: none; }
+  #file-input, #photo-input { display: none; }
+
+  main { flex: 1 1 auto; display: flex; min-height: 0; position: relative; }
+  .viewport { flex: 1 1 auto; position: relative; min-width: 0; }
+  canvas#gl { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  canvas#gl:active { cursor: grabbing; }
+  .gl-fallback { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 40px; font-size: 14px; color: var(--text-dim); background: var(--bg); }
+
+  .hint {
+    position: absolute; left: 20px; bottom: 18px; font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.03em; color: var(--text-faint); display: flex; gap: 14px; pointer-events: none;
+    opacity: 0; transition: opacity 0.4s ease;
+  }
+  .hint.visible { opacity: 1; }
+
+  .empty-state {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; text-align: center; gap: 18px; padding: 40px; transition: opacity 0.25s ease;
+  }
+  .empty-state.hidden { opacity: 0; pointer-events: none; }
+  .empty-state h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(28px, 4vw, 42px); letter-spacing: 0.01em; text-wrap: balance; margin: 0; color: var(--text); }
+  .empty-state p { font-size: 14.5px; line-height: 1.6; color: var(--text-dim); max-width: 42ch; margin: 0; }
+
+  .drop-active .empty-state { outline: 2px dashed var(--accent); outline-offset: -12px; }
+
+  aside {
+    flex: 0 0 320px; background: var(--surface); border-left: 1px solid var(--border);
+    padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 18px;
+  }
+  @media (max-width: 760px) {
+    aside {
+      position: absolute; right: 0; top: 0; bottom: 0; width: min(320px, 86vw);
+      box-shadow: -12px 0 24px var(--shadow); transform: translateX(100%); transition: transform 0.22s ease;
+    }
+    aside.open { transform: translateX(0); }
+    .aside-toggle { display: inline-flex !important; }
+  }
+  .aside-toggle { display: none; }
+
+  .field-name { font-family: var(--font-mono); font-size: 12.5px; font-weight: 500; color: var(--text); word-break: break-word; line-height: 1.4; }
+
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11.5px;
+    font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; padding: 5px 10px; border-radius: 100px; width: fit-content;
+  }
+  .status-pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .status-pill.warn { background: var(--error-bg); color: var(--error); }
+  .status-pill .swatch { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+  .stat-group { display: flex; flex-direction: column; gap: 10px; }
+  .stat-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-faint); }
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+  .stat { display: flex; flex-direction: column; gap: 3px; }
+  .stat .k { font-size: 10.5px; color: var(--text-dim); }
+  .stat .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 500; color: var(--text); }
+  .stat .v small { font-size: 11px; color: var(--text-dim); font-weight: 400; }
+
+  hr.rule { border: none; border-top: 1px solid var(--border); margin: 2px 0; }
+
+  /* ---------------------------------------------------------------
+     Generate form
+     ------------------------------------------------------------ */
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 12.5px; color: var(--text-dim); }
+  .field select, .field input[type="number"] {
+    font-family: var(--font-body); font-size: 13.5px; color: var(--text); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+  }
+  .field select:disabled { color: var(--text-faint); }
+  .field-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .field-row label { font-size: 13px; color: var(--text); }
+
+  .drop-photo {
+    border: 1.5px dashed var(--border); border-radius: 8px; padding: 18px; text-align: center;
+    cursor: pointer; font-size: 13px; color: var(--text-dim); transition: border-color 0.12s ease;
+  }
+  .drop-photo:hover, .drop-photo.drop-active { border-color: var(--accent); }
+  .drop-photo .filename { color: var(--text); font-weight: 500; margin-top: 4px; }
+
+  /* Stage list */
+  .stage-list { display: flex; flex-direction: column; gap: 8px; }
+  .stage-row {
+    display: flex; align-items: center; gap: 10px; font-size: 13px; padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .stage-row:last-child { border-bottom: none; }
+  .stage-row { align-items: flex-start; }
+  .stage-row .icon-col { padding-top: 1px; }
+  .stage-row .text-col { flex: 1 1 auto; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .stage-row .name { color: var(--text); text-transform: capitalize; }
+  .stage-row .desc { font-size: 11.5px; color: var(--text-faint); line-height: 1.4; }
+  .stage-row .elapsed { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-dim); padding-top: 1px; }
+  .stage-icon { width: 14px; height: 14px; flex: none; display: flex; align-items: center; justify-content: center; }
+  .stage-icon.pending { color: var(--text-faint); }
+  .stage-icon.running { color: var(--accent); animation: spin 0.9s linear infinite; }
+  .stage-icon.done { color: var(--ok); }
+  .stage-icon.error { color: var(--error); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .issue-list { display: flex; flex-direction: column; gap: 6px; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5; }
+  .issue-list .error-text { color: var(--error); }
+  .issue-list .warn-text { color: var(--accent-strong); }
+
+  .error-banner { background: var(--error-bg); color: var(--error); border-radius: 6px; padding: 10px 12px; font-size: 13px; line-height: 1.5; }
+
+  footer.panel-footer { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-faint); line-height: 1.6; }
+  footer.panel-footer a { color: var(--text-dim); }
+
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } .stage-icon.running { animation: none; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wordmark">
+    Print<span class="dot">·</span>Bed
+    <small>generate</small>
+  </div>
+  <div class="toolbar">
+    <button class="btn aside-toggle" id="toggle-aside" aria-label="Toggle panel" aria-expanded="false">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 4h10M3 8h10M3 12h10"/></svg>
+    </button>
+    <button class="btn" id="btn-open">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 6.5V4a1 1 0 0 1 1-1h2.5l1.2 1.5H13a1 1 0 0 1 1 1V6"/><path d="M2 6.5h12l-1.4 6.3a1 1 0 0 1-1 .7H4.4a1 1 0 0 1-1-.7L2 6.5Z"/></svg>
+      Open STL
+    </button>
+    <input type="file" id="file-input" accept=".stl">
+  </div>
+</header>
+
+<main id="main">
+  <div class="viewport" id="viewport">
+    <canvas id="gl"></canvas>
+    <div class="gl-fallback" id="gl-fallback">
+      Your browser doesn't support WebGL, so meshes can't be rendered here.
+      Try a recent version of Chrome, Firefox, Safari, or Edge.
+    </div>
+
+    <div class="empty-state" id="empty-state">
+      <h1>Nothing on the bed yet</h1>
+      <p>
+        Upload a photo and generate, or open an existing STL from your computer.
+      </p>
+    </div>
+
+    <div class="hint" id="hint">
+      <span>drag to orbit</span>
+      <span>scroll to zoom</span>
+      <span>shift-drag to pan</span>
+    </div>
+  </div>
+
+  <aside id="aside" aria-label="Generate and mesh info">
+
+    <!-- Generate form: visible when idle -->
+    <div id="panel-form" style="display:flex; flex-direction:column; gap:18px;">
+      <div id="auto-unclear-banner" class="panel-empty" style="display:none; font-size:12px; color:var(--text-faint); line-height:1.5;"></div>
+
+      <div class="field-row">
+        <label for="auto-detect-input">Auto-detect (recommended)</label>
+        <input type="checkbox" id="auto-detect-input">
+      </div>
+      <div class="panel-empty" id="auto-detect-hint" style="font-size:12px; color:var(--text-faint); line-height:1.5; margin-top:-10px;">
+        Looks at the image first and picks a backend (and spec-sheet mode, if
+        that's what it is) automatically -- shown before generation starts.
+      </div>
+
+      <div class="field-row" id="spec-mode-row">
+        <label for="spec-mode-input">Spec sheet mode</label>
+        <input type="checkbox" id="spec-mode-input">
+      </div>
+
+      <div class="stat-group">
+        <div class="stat-label" id="photo-label">Photo</div>
+        <div class="drop-photo" id="drop-photo">
+          Click or drop an image
+          <div class="filename" id="photo-filename"></div>
+        </div>
+        <input type="file" id="photo-input" accept="image/*">
+      </div>
+
+      <div class="field" id="backend-select-row">
+        <label for="backend-select">Backend</label>
+        <select id="backend-select"></select>
+      </div>
+
+      <div class="field">
+        <label for="size-input" id="size-label">Size (mm, longest axis)</label>
+        <input type="number" id="size-input" placeholder="100" min="1" step="1">
+      </div>
+
+      <div class="field-row">
+        <label for="hollow-input">Hollow</label>
+        <input type="checkbox" id="hollow-input">
+      </div>
+
+      <div class="field-row">
+        <label for="add-base-input">Base plate</label>
+        <input type="checkbox" id="add-base-input" checked>
+      </div>
+
+      <div class="field-row" id="texture-row">
+        <label for="texture-input">Color (GLB)</label>
+        <input type="checkbox" id="texture-input">
+      </div>
+      <div class="panel-empty" id="texture-hint" style="font-size:12px; color:var(--text-faint); line-height:1.5; margin-top:-10px;">
+        Adds a colored preview alongside the print-ready STL, shown here
+        instead once generation finishes. Only triposr supports this option
+        today; hunyuan3d doesn't produce color yet.
+      </div>
+
+      <div class="field-row" id="geometry-cues-row">
+        <label for="geometry-cues-input">Geometry cues (diagnostic)</label>
+        <input type="checkbox" id="geometry-cues-input">
+      </div>
+      <div class="panel-empty" id="geometry-cues-hint" style="font-size:12px; color:var(--text-faint); line-height:1.5; margin-top:-10px;">
+        Writes a depth/normal map alongside the STL for inspection. Doesn't
+        change the generated mesh yet — no backend consumes it as input.
+      </div>
+
+      <div id="spec-fields" style="display:none; flex-direction:column; gap:18px;">
+        <div class="field">
+          <label for="vlm-url-input">VLM server URL</label>
+          <input type="text" id="vlm-url-input" value="http://localhost:8082">
+        </div>
+        <div class="field">
+          <label for="tolerance-input">Dimension tolerance (%)</label>
+          <input type="number" id="tolerance-input" value="15" min="0" step="1">
+        </div>
+      </div>
+
+      <button class="btn primary" id="btn-generate" disabled>Generate</button>
+      <div class="panel-empty" id="generate-hint" style="font-size:12px; color:var(--text-faint); line-height:1.5;">
+        Pick a photo and an available backend to begin.
+      </div>
+    </div>
+
+    <!-- Progress: visible while a job runs -->
+    <div id="panel-progress" style="display:none; flex-direction:column; gap:14px;">
+      <div class="stat-group">
+        <div class="stat-label">Generating</div>
+        <div class="field-name" id="progress-filename">—</div>
+      </div>
+      <div id="progress-classification" class="panel-empty" style="display:none; font-size:12px; color:var(--text-faint); line-height:1.5;"></div>
+      <hr class="rule">
+      <div class="stage-list" id="stage-list"></div>
+      <div id="progress-error" class="error-banner" style="display:none;"></div>
+    </div>
+
+    <!-- Result: mesh stats + validation report -->
+    <div id="panel-loaded" style="display:none; flex-direction:column; gap:18px;">
+      <div class="stat-group">
+        <div class="stat-label">File</div>
+        <div class="field-name" id="stat-filename">—</div>
+        <div id="stat-status" class="status-pill ok"><span class="swatch"></span><span id="stat-status-text">Parsed</span></div>
+      </div>
+
+      <hr class="rule">
+
+      <div class="stat-group">
+        <div class="stat-label">Geometry</div>
+        <div class="stat-grid">
+          <div class="stat"><div class="k">Triangles</div><div class="v" id="stat-tris">—</div></div>
+          <div class="stat"><div class="k">File size</div><div class="v" id="stat-size">—</div></div>
+        </div>
+      </div>
+
+      <hr class="rule">
+
+      <div class="stat-group">
+        <div class="stat-label">Footprint (mm)</div>
+        <div class="stat-grid">
+          <div class="stat"><div class="k">X</div><div class="v" id="stat-x">—</div></div>
+          <div class="stat"><div class="k">Y</div><div class="v" id="stat-y">—</div></div>
+          <div class="stat"><div class="k">Z (height)</div><div class="v" id="stat-z">—</div></div>
+        </div>
+      </div>
+
+      <hr class="rule" id="classification-info-rule" style="display:none;">
+
+      <div class="stat-group" id="classification-info-group" style="display:none;">
+        <div class="stat-label">Auto-detected</div>
+        <div class="field-name" id="classification-info-category">—</div>
+        <div class="panel-empty" id="classification-info-message" style="font-size:12px; color:var(--text-faint); line-height:1.5;"></div>
+      </div>
+
+      <hr class="rule" id="spec-info-rule" style="display:none;">
+
+      <div class="stat-group" id="spec-info-group" style="display:none;">
+        <div class="stat-label">Extracted spec</div>
+        <div class="field-name" id="spec-info-title">—</div>
+        <div class="stat-grid" id="spec-info-dims"></div>
+      </div>
+
+      <hr class="rule">
+
+      <div class="stat-group" id="issues-group" style="display:none;">
+        <div class="stat-label">Validation</div>
+        <div class="issue-list" id="issue-list"></div>
+      </div>
+
+      <a class="btn primary" id="btn-download-stl" download="result.stl">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 2v8m0 0L5 7m3 3 3-3"/><path d="M2.5 11v2a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2"/></svg>
+        Download STL
+      </a>
+      <a class="btn" id="btn-download-glb" download="result.glb" style="display:none;">Download colored GLB</a>
+      <button class="btn" id="btn-generate-again">Generate another</button>
+    </div>
+
+    <footer class="panel-footer">
+      Backend availability and generation happen on the server. First run of a
+      given backend loads model weights and may take a while before progress
+      appears to move.
+    </footer>
+  </aside>
+</main>
+
+<div class="visually-hidden" id="live-region" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------
+  // DOM refs
+  // ---------------------------------------------------------------
+  var canvas = document.getElementById("gl");
+  var viewport = document.getElementById("viewport");
+  var emptyState = document.getElementById("empty-state");
+  var hint = document.getElementById("hint");
+  var fileInput = document.getElementById("file-input");
+  var liveRegion = document.getElementById("live-region");
+  var mainEl = document.getElementById("main");
+  var asideEl = document.getElementById("aside");
+  var glFallback = document.getElementById("gl-fallback");
+
+  var panelForm = document.getElementById("panel-form");
+  var panelProgress = document.getElementById("panel-progress");
+  var panelLoaded = document.getElementById("panel-loaded");
+
+  var statFilename = document.getElementById("stat-filename");
+  var statTris = document.getElementById("stat-tris");
+  var statSize = document.getElementById("stat-size");
+  var statX = document.getElementById("stat-x");
+  var statY = document.getElementById("stat-y");
+  var statZ = document.getElementById("stat-z");
+  var statStatus = document.getElementById("stat-status");
+  var statStatusText = document.getElementById("stat-status-text");
+  var issuesGroup = document.getElementById("issues-group");
+  var issueList = document.getElementById("issue-list");
+
+  document.getElementById("btn-open").addEventListener("click", function () { fileInput.click(); });
+  document.getElementById("toggle-aside").addEventListener("click", function () {
+    var open = asideEl.classList.toggle("open");
+    this.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+
+  fileInput.addEventListener("change", function (e) {
+    if (e.target.files && e.target.files[0]) loadFile(e.target.files[0]);
+  });
+
+  // ---------------------------------------------------------------
+  // Drag & drop an STL anywhere on the page (viewing only)
+  // ---------------------------------------------------------------
+  var dragDepth = 0;
+  ["dragenter", "dragover", "dragleave", "drop"].forEach(function (evt) {
+    window.addEventListener(evt, function (e) { e.preventDefault(); e.stopPropagation(); }, false);
+  });
+  window.addEventListener("dragenter", function () {
+    dragDepth++;
+    mainEl.classList.add("drop-active");
+  });
+  window.addEventListener("dragleave", function () {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) mainEl.classList.remove("drop-active");
+  });
+  window.addEventListener("drop", function (e) {
+    dragDepth = 0;
+    mainEl.classList.remove("drop-active");
+    var files = e.dataTransfer && e.dataTransfer.files;
+    if (files && files[0]) loadFile(files[0]);
+  });
+
+  function loadFile(file) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var mesh = parseSTL(reader.result);
+        showResultPanel();
+        // Already a local file -- nothing on the server to download, and
+        // leaving a previous job's link visible here would be misleading.
+        btnDownloadStl.style.display = "none";
+        btnDownloadGlb.style.display = "none";
+        onMeshReady(mesh, file.name, file.size);
+      } catch (err) {
+        announce("Could not read " + file.name + " as an STL file.");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function announce(msg) { liveRegion.textContent = msg; }
+
+  // ---------------------------------------------------------------
+  // STL parsing -- identical to docs/index.html's viewer, reused
+  // verbatim so the same tested parser backs both pages.
+  // ------------------------------------------------------------ */
+  function parseSTL(buffer) {
+    var isAscii = looksLikeAscii(buffer);
+    return isAscii ? parseAsciiSTL(buffer) : parseBinarySTL(new DataView(buffer));
+  }
+
+  function looksLikeAscii(buffer) {
+    if (buffer.byteLength < 84) return true;
+    var head = new Uint8Array(buffer, 0, Math.min(5, buffer.byteLength));
+    var text = String.fromCharCode.apply(null, head).toLowerCase();
+    if (text.indexOf("solid") !== 0) return false;
+    var triCount = new DataView(buffer).getUint32(80, true);
+    var expected = 84 + triCount * 50;
+    return expected !== buffer.byteLength;
+  }
+
+  function parseBinarySTL(view) {
+    var triCount = view.getUint32(80, true);
+    var positions = new Float32Array(triCount * 9);
+    var normals = new Float32Array(triCount * 9);
+    var offset = 84;
+    var min = [Infinity, Infinity, Infinity];
+    var max = [-Infinity, -Infinity, -Infinity];
+
+    for (var i = 0; i < triCount; i++) {
+      var nx = view.getFloat32(offset, true);
+      var ny = view.getFloat32(offset + 4, true);
+      var nz = view.getFloat32(offset + 8, true);
+      offset += 12;
+
+      for (var v = 0; v < 3; v++) {
+        var px = view.getFloat32(offset, true);
+        var py = view.getFloat32(offset + 4, true);
+        var pz = view.getFloat32(offset + 8, true);
+        offset += 12;
+
+        var base = i * 9 + v * 3;
+        positions[base] = px; positions[base + 1] = py; positions[base + 2] = pz;
+        normals[base] = nx; normals[base + 1] = ny; normals[base + 2] = nz;
+
+        if (px < min[0]) min[0] = px; if (px > max[0]) max[0] = px;
+        if (py < min[1]) min[1] = py; if (py > max[1]) max[1] = py;
+        if (pz < min[2]) min[2] = pz; if (pz > max[2]) max[2] = pz;
+      }
+      offset += 2;
+    }
+
+    return finalizeMesh(positions, normals, triCount, min, max);
+  }
+
+  function parseAsciiSTL(buffer) {
+    var text = new TextDecoder("utf-8").decode(buffer);
+    var vertexRe = /vertex\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)/g;
+    var normalRe = /facet normal\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)/g;
+    var verts = [], norms = [], m;
+    while ((m = normalRe.exec(text))) norms.push(parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]));
+    while ((m = vertexRe.exec(text))) verts.push(parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]));
+
+    var triCount = Math.floor(verts.length / 9);
+    var positions = new Float32Array(triCount * 9);
+    var normals = new Float32Array(triCount * 9);
+    var min = [Infinity, Infinity, Infinity];
+    var max = [-Infinity, -Infinity, -Infinity];
+
+    for (var i = 0; i < triCount; i++) {
+      var nx = norms[i * 3] || 0, ny = norms[i * 3 + 1] || 0, nz = norms[i * 3 + 2] || 0;
+      for (var v = 0; v < 3; v++) {
+        var base = i * 9 + v * 3;
+        var src = i * 9 + v * 3;
+        var px = verts[src], py = verts[src + 1], pz = verts[src + 2];
+        positions[base] = px; positions[base + 1] = py; positions[base + 2] = pz;
+        normals[base] = nx; normals[base + 1] = ny; normals[base + 2] = nz;
+        if (px < min[0]) min[0] = px; if (px > max[0]) max[0] = px;
+        if (py < min[1]) min[1] = py; if (py > max[1]) max[1] = py;
+        if (pz < min[2]) min[2] = pz; if (pz > max[2]) max[2] = pz;
+      }
+    }
+    return finalizeMesh(positions, normals, triCount, min, max);
+  }
+
+  function finalizeMesh(positions, normals, triCount, min, max) {
+    for (var i = 0; i < triCount; i++) {
+      var b = i * 9;
+      if (normals[b] === 0 && normals[b + 1] === 0 && normals[b + 2] === 0) {
+        var ax = positions[b + 3] - positions[b], ay = positions[b + 4] - positions[b + 1], az = positions[b + 5] - positions[b + 2];
+        var bx = positions[b + 6] - positions[b], by = positions[b + 7] - positions[b + 1], bz = positions[b + 8] - positions[b + 2];
+        var cx = ay * bz - az * by, cy = az * bx - ax * bz, cz = ax * by - ay * bx;
+        var len = Math.hypot(cx, cy, cz) || 1;
+        normals[b] = normals[b + 3] = normals[b + 6] = cx / len;
+        normals[b + 1] = normals[b + 4] = normals[b + 7] = cy / len;
+        normals[b + 2] = normals[b + 5] = normals[b + 8] = cz / len;
+      }
+    }
+    return {
+      positions: positions, normals: normals, triCount: triCount, min: min, max: max,
+      center: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2],
+      size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]]
+    };
+  }
+
+  // ---------------------------------------------------------------
+  // GLB parsing -- deliberately minimal, scoped to exactly what
+  // printable's own export produces (trimesh's GLB exporter), not the
+  // general glTF spec. Verified against a real printable-generated GLB
+  // (TripoSR, --opt texture=true) rather than guessed from the spec:
+  // one mesh/one primitive, POSITION + indices always present, NORMAL
+  // often absent (computed here when missing), color as either a baked
+  // TEXCOORD_0+image material or a per-vertex COLOR_0 attribute
+  // (TripoSR) -- never both. No animation/skinning/multi-primitive/KHR
+  // extensions/external buffer URIs are handled; trimesh doesn't emit them
+  // for printable's meshes, so there's nothing here to read them.
+  // ------------------------------------------------------------ */
+  var GLB_COMPONENT_CTORS = {
+    5120: Int8Array, 5121: Uint8Array, 5122: Int16Array,
+    5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array
+  };
+  var GLB_TYPE_COMPONENTS = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 };
+
+  function glbReadAccessor(json, bin, idx) {
+    var acc = json.accessors[idx];
+    var view = json.bufferViews[acc.bufferView];
+    var Ctor = GLB_COMPONENT_CTORS[acc.componentType];
+    var n = GLB_TYPE_COMPONENTS[acc.type];
+    var byteOffset = (view.byteOffset || 0) + (acc.byteOffset || 0);
+    return new Ctor(bin, byteOffset, acc.count * n);
+  }
+
+  function glbComputeNormals(positions, indices) {
+    var normals = new Float32Array(positions.length);
+    for (var i = 0; i < indices.length; i += 3) {
+      var a = indices[i] * 3, b = indices[i + 1] * 3, c = indices[i + 2] * 3;
+      var ux = positions[b] - positions[a], uy = positions[b + 1] - positions[a + 1], uz = positions[b + 2] - positions[a + 2];
+      var vx = positions[c] - positions[a], vy = positions[c + 1] - positions[a + 1], vz = positions[c + 2] - positions[a + 2];
+      var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      normals[a] += nx; normals[a + 1] += ny; normals[a + 2] += nz;
+      normals[b] += nx; normals[b + 1] += ny; normals[b + 2] += nz;
+      normals[c] += nx; normals[c + 1] += ny; normals[c + 2] += nz;
+    }
+    for (var v = 0; v < normals.length; v += 3) {
+      var len = Math.hypot(normals[v], normals[v + 1], normals[v + 2]) || 1;
+      normals[v] /= len; normals[v + 1] /= len; normals[v + 2] /= len;
+    }
+    return normals;
+  }
+
+  function parseGLB(buffer) {
+    var dv = new DataView(buffer);
+    if (dv.getUint32(0, true) !== 0x46546c67) throw new Error("not a GLB file");
+    var totalLength = dv.getUint32(8, true);
+    var offset = 12, json = null, bin = null;
+    while (offset < totalLength) {
+      var chunkLength = dv.getUint32(offset, true);
+      var chunkType = dv.getUint32(offset + 4, true);
+      var chunkStart = offset + 8;
+      if (chunkType === 0x4e4f534a) { // "JSON"
+        json = JSON.parse(new TextDecoder("utf-8").decode(new Uint8Array(buffer, chunkStart, chunkLength)));
+      } else if (chunkType === 0x004e4942) { // "BIN\0"
+        bin = buffer.slice(chunkStart, chunkStart + chunkLength);
+      }
+      offset = chunkStart + chunkLength;
+    }
+    if (!json || !bin) throw new Error("GLB missing JSON or BIN chunk");
+
+    var prim = json.meshes[0].primitives[0];
+    var positions = glbReadAccessor(json, bin, prim.attributes.POSITION);
+    var indices = glbReadAccessor(json, bin, prim.indices);
+    var normals = prim.attributes.NORMAL !== undefined
+      ? glbReadAccessor(json, bin, prim.attributes.NORMAL)
+      : glbComputeNormals(positions, indices);
+
+    var hasTexture = false, uvs = null, imageBlob = null;
+    if (prim.attributes.TEXCOORD_0 !== undefined && json.materials && json.materials.length) {
+      var texInfo = (json.materials[prim.material || 0].pbrMetallicRoughness || {}).baseColorTexture;
+      if (texInfo) {
+        uvs = glbReadAccessor(json, bin, prim.attributes.TEXCOORD_0);
+        var imgDef = json.images[json.textures[texInfo.index].source];
+        var iv = json.bufferViews[imgDef.bufferView];
+        var ivOffset = iv.byteOffset || 0;
+        imageBlob = new Blob([bin.slice(ivOffset, ivOffset + iv.byteLength)], { type: imgDef.mimeType || "image/png" });
+        hasTexture = true;
+      }
+    }
+    if (!uvs) uvs = new Float32Array((positions.length / 3) * 2); // dummy, unused when !hasTexture
+
+    var colors;
+    if (prim.attributes.COLOR_0 !== undefined) {
+      var raw = glbReadAccessor(json, bin, prim.attributes.COLOR_0);
+      var compCount = raw.length / (positions.length / 3);
+      if (compCount === 4) {
+        colors = raw instanceof Uint8Array ? raw : new Uint8Array(raw); // trust normalized uint8 RGBA
+      } else {
+        // VEC3: expand to RGBA with full alpha.
+        colors = new Uint8Array((positions.length / 3) * 4);
+        for (var vi = 0; vi < positions.length / 3; vi++) {
+          colors[vi * 4] = raw[vi * 3]; colors[vi * 4 + 1] = raw[vi * 3 + 1];
+          colors[vi * 4 + 2] = raw[vi * 3 + 2]; colors[vi * 4 + 3] = 255;
+        }
+      }
+    } else {
+      // No vertex color and no texture: flat default, matching the STL
+      // viewer's own fallback flat color rather than an unlit black mesh.
+      var flat = hasTexture ? [255, 255, 255, 255] : hexOrRgbaToVec3(
+        getComputedStyle(document.documentElement).getPropertyValue("--accent-strong").trim()
+      ).concat([1]).map(function (c) { return Math.round(c * 255); });
+      colors = new Uint8Array((positions.length / 3) * 4);
+      for (var ci = 0; ci < colors.length; ci += 4) {
+        colors[ci] = flat[0]; colors[ci + 1] = flat[1]; colors[ci + 2] = flat[2]; colors[ci + 3] = flat[3];
+      }
+    }
+
+    var min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+    for (var p = 0; p < positions.length; p += 3) {
+      for (var d = 0; d < 3; d++) {
+        if (positions[p + d] < min[d]) min[d] = positions[p + d];
+        if (positions[p + d] > max[d]) max[d] = positions[p + d];
+      }
+    }
+
+    return {
+      positions: positions instanceof Float32Array ? positions : new Float32Array(positions),
+      normals: normals, uvs: uvs, colors: colors, indices: indices,
+      indexType: indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
+      hasTexture: hasTexture, imageBlob: imageBlob, image: null,
+      triCount: indices.length / 3, min: min, max: max,
+      center: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2],
+      size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]],
+      isGLB: true
+    };
+  }
+
+  // ---------------------------------------------------------------
+  // Minimal mat4 helpers (column-major, WebGL convention)
+  // ------------------------------------------------------------ */
+  var mat4 = {
+    identity: function () { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); },
+    perspective: function (fovy, aspect, near, far) {
+      var f = 1 / Math.tan(fovy / 2), out = new Float32Array(16);
+      out[0] = f / aspect; out[5] = f;
+      out[10] = (far + near) / (near - far); out[11] = -1;
+      out[14] = (2 * far * near) / (near - far);
+      return out;
+    },
+    lookAt: function (eye, target, up) {
+      var zx = eye[0]-target[0], zy = eye[1]-target[1], zz = eye[2]-target[2];
+      var zl = Math.hypot(zx, zy, zz) || 1; zx/=zl; zy/=zl; zz/=zl;
+      var xx = up[1]*zz - up[2]*zy, xy = up[2]*zx - up[0]*zz, xz = up[0]*zy - up[1]*zx;
+      var xl = Math.hypot(xx, xy, xz) || 1; xx/=xl; xy/=xl; xz/=xl;
+      var yx = zy*xz - zz*xy, yy = zz*xx - zx*xz, yz = zx*xy - zy*xx;
+      return new Float32Array([
+        xx, yx, zx, 0,
+        xy, yy, zy, 0,
+        xz, yz, zz, 0,
+        -(xx*eye[0]+xy*eye[1]+xz*eye[2]), -(yx*eye[0]+yy*eye[1]+yz*eye[2]), -(zx*eye[0]+zy*eye[1]+zz*eye[2]), 1
+      ]);
+    },
+    normalFromMat4: function (m) {
+      return new Float32Array([m[0],m[1],m[2], m[4],m[5],m[6], m[8],m[9],m[10]]);
+    }
+  };
+
+  // ---------------------------------------------------------------
+  // WebGL setup
+  // ------------------------------------------------------------ */
+  var gl = canvas.getContext("webgl", { antialias: true, alpha: false }) ||
+           canvas.getContext("experimental-webgl", { antialias: true, alpha: false });
+
+  if (!gl) {
+    glFallback.style.display = "flex";
+  }
+
+  var VS = [
+    "attribute vec3 aPosition;",
+    "attribute vec3 aNormal;",
+    "uniform mat4 uModel, uView, uProjection;",
+    "uniform mat3 uNormalMatrix;",
+    "varying vec3 vNormal;",
+    "varying vec3 vWorldPos;",
+    "void main() {",
+    "  vec4 wp = uModel * vec4(aPosition, 1.0);",
+    "  vWorldPos = wp.xyz;",
+    "  vNormal = normalize(uNormalMatrix * aNormal);",
+    "  gl_Position = uProjection * uView * wp;",
+    "}"
+  ].join("\n");
+
+  var FS = [
+    "precision mediump float;",
+    "varying vec3 vNormal;",
+    "varying vec3 vWorldPos;",
+    "uniform vec3 uLightDir, uColor, uCameraPos;",
+    "uniform float uShaded;",
+    "void main() {",
+    "  vec3 N = normalize(vNormal);",
+    "  if (!gl_FrontFacing) N = -N;",
+    "  vec3 L = normalize(uLightDir);",
+    "  vec3 V = normalize(uCameraPos - vWorldPos);",
+    "  vec3 H = normalize(L + V);",
+    "  float diff = max(dot(N, L), 0.0);",
+    "  float fill = max(dot(N, vec3(-L.x, 0.3, -L.z)), 0.0) * 0.2;",
+    "  float spec = pow(max(dot(N, H), 0.0), 28.0) * 0.12;",
+    "  float lit = 0.4 + diff * 0.5 + fill;",
+    "  vec3 shadedColor = uColor * lit + vec3(spec);",
+    "  vec3 flatColor = uColor * 0.85;",
+    "  gl_FragColor = vec4(mix(flatColor, shadedColor, uShaded), 1.0);",
+    "}"
+  ].join("\n");
+
+  function compile(type, src) {
+    var s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return s;
+  }
+
+  function makeProgram(vsSrc, fsSrc) {
+    var p = gl.createProgram();
+    gl.attachShader(p, compile(gl.VERTEX_SHADER, vsSrc));
+    gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fsSrc));
+    gl.linkProgram(p);
+    return p;
+  }
+
+  var WIRE_FS = [
+    "precision mediump float;",
+    "uniform vec3 uColor;",
+    "void main() { gl_FragColor = vec4(uColor, 1.0); }"
+  ].join("\n");
+
+  // GLB meshes carry either a baked UV texture or per-vertex color
+  // (TripoSR's --opt texture=true) -- never both -- so one shader handles
+  // either via uHasTexture rather than compiling two programs. aColor/aUV
+  // are always bound to *some* buffer (a flat-white/zero dummy when unused)
+  // so enabling both attributes unconditionally never mismatches a buffer.
+  var TEX_VS = [
+    "attribute vec3 aPosition;",
+    "attribute vec3 aNormal;",
+    "attribute vec2 aUV;",
+    "attribute vec4 aColor;",
+    "uniform mat4 uModel, uView, uProjection;",
+    "uniform mat3 uNormalMatrix;",
+    "varying vec3 vNormal;",
+    "varying vec3 vWorldPos;",
+    "varying vec2 vUV;",
+    "varying vec3 vColor;",
+    "void main() {",
+    "  vec4 wp = uModel * vec4(aPosition, 1.0);",
+    "  vWorldPos = wp.xyz;",
+    "  vNormal = normalize(uNormalMatrix * aNormal);",
+    "  vUV = aUV;",
+    "  vColor = aColor.rgb;",
+    "  gl_Position = uProjection * uView * wp;",
+    "}"
+  ].join("\n");
+
+  var TEX_FS = [
+    "precision mediump float;",
+    "varying vec3 vNormal;",
+    "varying vec3 vWorldPos;",
+    "varying vec2 vUV;",
+    "varying vec3 vColor;",
+    "uniform vec3 uLightDir, uCameraPos;",
+    "uniform float uShaded, uHasTexture;",
+    "uniform sampler2D uSampler;",
+    "void main() {",
+    "  vec3 N = normalize(vNormal);",
+    "  if (!gl_FrontFacing) N = -N;",
+    "  vec3 L = normalize(uLightDir);",
+    "  vec3 V = normalize(uCameraPos - vWorldPos);",
+    "  vec3 H = normalize(L + V);",
+    "  float diff = max(dot(N, L), 0.0);",
+    "  float fill = max(dot(N, vec3(-L.x, 0.3, -L.z)), 0.0) * 0.2;",
+    "  float spec = pow(max(dot(N, H), 0.0), 28.0) * 0.12;",
+    "  float lit = 0.4 + diff * 0.5 + fill;",
+    "  vec3 base = mix(vColor, texture2D(uSampler, vUV).rgb, uHasTexture);",
+    "  vec3 shadedColor = base * lit + vec3(spec);",
+    "  vec3 flatColor = base * 0.85;",
+    "  gl_FragColor = vec4(mix(flatColor, shadedColor, uShaded), 1.0);",
+    "}"
+  ].join("\n");
+
+  var solidProgram, wireProgram, texProgram, solidLocs, wireLocs, texLocs;
+
+  function locs(p, names) {
+    var out = {};
+    names.forEach(function (n) {
+      out[n] = n.indexOf("a") === 0 ? gl.getAttribLocation(p, n) : gl.getUniformLocation(p, n);
+    });
+    return out;
+  }
+
+  if (gl) {
+    solidProgram = makeProgram(VS, FS);
+    wireProgram = makeProgram(VS, WIRE_FS);
+    texProgram = makeProgram(TEX_VS, TEX_FS);
+    solidLocs = locs(solidProgram, ["aPosition", "aNormal", "uModel", "uView", "uProjection", "uNormalMatrix", "uLightDir", "uColor", "uCameraPos", "uShaded"]);
+    wireLocs = locs(wireProgram, ["aPosition", "aNormal", "uModel", "uView", "uProjection", "uNormalMatrix", "uColor"]);
+    texLocs = locs(texProgram, ["aPosition", "aNormal", "aUV", "aColor", "uModel", "uView", "uProjection", "uNormalMatrix", "uLightDir", "uCameraPos", "uShaded", "uHasTexture", "uSampler"]);
+    // GLB indices come out of trimesh as uint32 (seen even for meshes well
+    // under 65536 vertices, not just when actually needed) -- WebGL1 draws
+    // those only with this extension. Universally supported in practice.
+    gl.getExtension("OES_element_index_uint");
+  }
+
+  var posBuffer = gl && gl.createBuffer();
+  var normBuffer = gl && gl.createBuffer();
+  var uvBuffer = gl && gl.createBuffer();
+  var colorBuffer = gl && gl.createBuffer();
+  var idxBuffer = gl && gl.createBuffer();
+  var gridBuffer = gl && gl.createBuffer();
+  var gridVertCount = 0;
+  var meshTexture = gl && gl.createTexture();
+
+  if (gl) {
+    // 1x1 opaque white -- bound whenever a GLB has no baked texture, so
+    // uSampler always reads *something* even though uHasTexture=0 discards
+    // it in the mix() above (an unbound/incomplete texture unit can log a
+    // console warning in some browsers otherwise).
+    gl.bindTexture(gl.TEXTURE_2D, meshTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
+  }
+
+  function uploadTexture(image) {
+    gl.bindTexture(gl.TEXTURE_2D, meshTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    // NPOT-safe filtering: no mipmaps, no REPEAT wrap.
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  }
+
+  var currentMesh = null;
+  var showShaded = true, showWire = false, showGrid = true;
+
+  function uploadMesh(mesh) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, mesh.positions, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, normBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, mesh.normals, gl.STATIC_DRAW);
+    if (mesh.isGLB) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, mesh.uvs, gl.STATIC_DRAW);
+      gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, mesh.colors, gl.STATIC_DRAW);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuffer);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
+      if (mesh.hasTexture && mesh.image) uploadTexture(mesh.image);
+    }
+  }
+
+  function buildGrid(radius, y) {
+    var divisions = 10;
+    var extent = radius * 1.6;
+    var step = (extent * 2) / divisions;
+    var lines = [];
+    for (var i = 0; i <= divisions; i++) {
+      var p = -extent + i * step;
+      lines.push(-extent, y, p, extent, y, p);
+      lines.push(p, y, -extent, p, y, extent);
+    }
+    var arr = new Float32Array(lines);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gridBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, arr, gl.STATIC_DRAW);
+    gridVertCount = arr.length / 3;
+  }
+
+  // ---------------------------------------------------------------
+  // Orbit camera
+  // ------------------------------------------------------------ */
+  var cam = { target: [0, 0, 0], radius: 10, theta: Math.PI * 0.28, phi: Math.PI * 0.36, panX: 0, panY: 0 };
+
+  function camEye() {
+    var r = cam.radius;
+    var x = r * Math.sin(cam.phi) * Math.sin(cam.theta);
+    var y = r * Math.cos(cam.phi);
+    var z = r * Math.sin(cam.phi) * Math.cos(cam.theta);
+    return [cam.target[0] + x + cam.panX, cam.target[1] + y + cam.panY, cam.target[2] + z];
+  }
+
+  // A light direction fixed in world space leaves whatever's facing away
+  // from it dark -- orbit to inspect the far side of an asymmetric mesh
+  // (a Hunyuan3D/TripoSR output, not a symmetric relief) and you're looking
+  // at a near-black surface. Riding the light near the camera, offset up
+  // and to the side rather than dead-on, keeps the visible surface lit
+  // while orbiting without flattening out the shading that reveals relief.
+  function cameraLightDir() {
+    var theta = cam.theta - 0.55;
+    var phi = Math.max(0.2, cam.phi - 0.4);
+    return [
+      Math.sin(phi) * Math.sin(theta),
+      Math.cos(phi),
+      Math.sin(phi) * Math.cos(theta)
+    ];
+  }
+
+  var dragging = false, panning = false, lastX = 0, lastY = 0;
+
+  canvas.addEventListener("pointerdown", function (e) {
+    dragging = true;
+    panning = e.shiftKey || e.button === 2;
+    lastX = e.clientX; lastY = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener("pointerup", function () { dragging = false; panning = false; });
+  canvas.addEventListener("pointercancel", function () { dragging = false; panning = false; });
+  canvas.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+  canvas.addEventListener("pointermove", function (e) {
+    if (!dragging) return;
+    var dx = e.clientX - lastX, dy = e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    if (panning) {
+      var s = cam.radius * 0.0016;
+      cam.panX -= dx * s; cam.panY += dy * s;
+    } else {
+      cam.theta -= dx * 0.0072;
+      cam.phi -= dy * 0.0072;
+      var lim = 0.06;
+      cam.phi = Math.max(lim, Math.min(Math.PI - lim, cam.phi));
+    }
+  });
+  canvas.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    var f = Math.exp(e.deltaY * 0.0016);
+    cam.radius = Math.max(cam.minRadius || 0.01, Math.min(cam.maxRadius || 1e6, cam.radius * f));
+  }, { passive: false });
+
+  // ---------------------------------------------------------------
+  // Render loop
+  // ------------------------------------------------------------ */
+  function resize() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var w = viewport.clientWidth, h = viewport.clientHeight;
+    canvas.width = Math.max(1, w * dpr);
+    canvas.height = Math.max(1, h * dpr);
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  function frame() {
+    requestAnimationFrame(frame);
+    if (!gl) return;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    var bgTop = cssVarRGB("--canvas-bg-top");
+    gl.clearColor(bgTop[0], bgTop[1], bgTop[2], 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+
+    var aspect = canvas.width / Math.max(1, canvas.height);
+    var proj = mat4.perspective(0.62, aspect, (cam.near || 0.01), (cam.far || 1000));
+    var view = mat4.lookAt(camEye(), [cam.target[0] + cam.panX, cam.target[1] + cam.panY, cam.target[2]], [0, 1, 0]);
+    var model = mat4.identity();
+    var normalMat = mat4.normalFromMat4(model);
+
+    if (showGrid && gridVertCount) {
+      gl.useProgram(wireProgram);
+      gl.enableVertexAttribArray(wireLocs.aPosition);
+      gl.bindBuffer(gl.ARRAY_BUFFER, gridBuffer);
+      gl.vertexAttribPointer(wireLocs.aPosition, 3, gl.FLOAT, false, 0, 0);
+      gl.uniformMatrix4fv(wireLocs.uModel, false, model);
+      gl.uniformMatrix4fv(wireLocs.uView, false, view);
+      gl.uniformMatrix4fv(wireLocs.uProjection, false, proj);
+      var gridColor = cssVarRGB("--grid-line");
+      gl.uniform3fv(wireLocs.uColor, gridColor);
+      gl.drawArrays(gl.LINES, 0, gridVertCount);
+    }
+
+    if (currentMesh && currentMesh.isGLB) {
+      gl.useProgram(texProgram);
+      gl.enableVertexAttribArray(texLocs.aPosition);
+      gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+      gl.vertexAttribPointer(texLocs.aPosition, 3, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(texLocs.aNormal);
+      gl.bindBuffer(gl.ARRAY_BUFFER, normBuffer);
+      gl.vertexAttribPointer(texLocs.aNormal, 3, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(texLocs.aUV);
+      gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
+      gl.vertexAttribPointer(texLocs.aUV, 2, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(texLocs.aColor);
+      gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+      gl.vertexAttribPointer(texLocs.aColor, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+
+      gl.uniformMatrix4fv(texLocs.uModel, false, model);
+      gl.uniformMatrix4fv(texLocs.uView, false, view);
+      gl.uniformMatrix4fv(texLocs.uProjection, false, proj);
+      gl.uniformMatrix3fv(texLocs.uNormalMatrix, false, normalMat);
+      gl.uniform3fv(texLocs.uLightDir, cameraLightDir());
+      gl.uniform3fv(texLocs.uCameraPos, camEye());
+      gl.uniform1f(texLocs.uShaded, showShaded ? 1 : 0);
+      gl.uniform1f(texLocs.uHasTexture, currentMesh.hasTexture ? 1 : 0);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, meshTexture);
+      gl.uniform1i(texLocs.uSampler, 0);
+
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuffer);
+      gl.drawElements(gl.TRIANGLES, currentMesh.indices.length, currentMesh.indexType, 0);
+      // Wireframe overlay is skipped for GLB: it's drawn today via a
+      // per-triangle LINE_LOOP walk over non-indexed positions, which
+      // doesn't fit an indexed mesh without real index-aware rework --
+      // not worth it for what's still an edge-case toggle.
+    } else if (currentMesh) {
+      gl.useProgram(solidProgram);
+      gl.enableVertexAttribArray(solidLocs.aPosition);
+      gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+      gl.vertexAttribPointer(solidLocs.aPosition, 3, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(solidLocs.aNormal);
+      gl.bindBuffer(gl.ARRAY_BUFFER, normBuffer);
+      gl.vertexAttribPointer(solidLocs.aNormal, 3, gl.FLOAT, false, 0, 0);
+
+      gl.uniformMatrix4fv(solidLocs.uModel, false, model);
+      gl.uniformMatrix4fv(solidLocs.uView, false, view);
+      gl.uniformMatrix4fv(solidLocs.uProjection, false, proj);
+      gl.uniformMatrix3fv(solidLocs.uNormalMatrix, false, normalMat);
+      gl.uniform3fv(solidLocs.uLightDir, cameraLightDir());
+      gl.uniform3fv(solidLocs.uColor, cssVarRGB("--accent-strong"));
+      gl.uniform3fv(solidLocs.uCameraPos, camEye());
+      gl.uniform1f(solidLocs.uShaded, showShaded ? 1 : 0);
+      gl.drawArrays(gl.TRIANGLES, 0, currentMesh.triCount * 3);
+
+      if (showWire) {
+        gl.useProgram(wireProgram);
+        gl.enableVertexAttribArray(wireLocs.aPosition);
+        gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+        gl.vertexAttribPointer(wireLocs.aPosition, 3, gl.FLOAT, false, 0, 0);
+        gl.uniformMatrix4fv(wireLocs.uModel, false, model);
+        gl.uniformMatrix4fv(wireLocs.uView, false, view);
+        gl.uniformMatrix4fv(wireLocs.uProjection, false, proj);
+        gl.uniform3fv(wireLocs.uColor, [0.06, 0.05, 0.03]);
+        for (var i = 0; i < currentMesh.triCount; i++) gl.drawArrays(gl.LINE_LOOP, i * 3, 3);
+      }
+    }
+  }
+
+  function cssVarRGB(name) {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return hexOrRgbaToVec3(v);
+  }
+
+  function hexOrRgbaToVec3(v) {
+    if (v.indexOf("#") === 0) {
+      var hex = v.replace("#", "");
+      if (hex.length === 3) hex = hex.split("").map(function (c) { return c + c; }).join("");
+      var num = parseInt(hex, 16);
+      return [((num >> 16) & 255) / 255, ((num >> 8) & 255) / 255, (num & 255) / 255];
+    }
+    var m = v.match(/[\d.]+/g);
+    if (m) return [parseFloat(m[0]) / 255, parseFloat(m[1]) / 255, parseFloat(m[2]) / 255];
+    return [0.5, 0.5, 0.5];
+  }
+
+  requestAnimationFrame(frame);
+
+  function onMeshReady(mesh, name, byteSize) {
+    currentMesh = mesh;
+    if (gl) uploadMesh(mesh);
+
+    var radius = Math.max(0.001, Math.hypot(mesh.size[0], mesh.size[1], mesh.size[2]) / 2);
+    cam.target = mesh.center.slice();
+    cam.radius = radius * 2.6;
+    cam.minRadius = radius * 0.05;
+    cam.maxRadius = radius * 20;
+    cam.near = radius * 0.01;
+    cam.far = radius * 40;
+    cam.panX = 0; cam.panY = 0;
+    cam.theta = Math.PI * 0.28;
+    cam.phi = Math.PI * 0.36;
+
+    if (gl) buildGrid(radius, mesh.min[2]);
+
+    emptyState.classList.add("hidden");
+    hint.classList.add("visible");
+
+    statFilename.textContent = name;
+    statTris.innerHTML = formatNumber(mesh.triCount);
+    statSize.innerHTML = formatBytes(byteSize);
+    statX.innerHTML = mesh.size[0].toFixed(2) + "<small></small>";
+    statY.innerHTML = mesh.size[1].toFixed(2) + "<small></small>";
+    statZ.innerHTML = mesh.size[2].toFixed(2) + "<small></small>";
+    statStatusText.textContent = "Parsed · " + mesh.triCount + " facets";
+    statStatus.className = "status-pill ok";
+
+    announce("Loaded " + name + ", " + mesh.triCount + " triangles.");
+  }
+
+  function formatNumber(n) { return n.toLocaleString(); }
+  function formatBytes(b) {
+    if (b < 1024) return b + " B";
+    if (b < 1024 * 1024) return (b / 1024).toFixed(1) + " KB";
+    return (b / (1024 * 1024)).toFixed(2) + " MB";
+  }
+
+  // =================================================================
+  // Generate flow: upload -> job -> SSE progress -> fetch result STL
+  // =================================================================
+  var backendSelect = document.getElementById("backend-select");
+  var photoInput = document.getElementById("photo-input");
+  var dropPhoto = document.getElementById("drop-photo");
+  var photoFilename = document.getElementById("photo-filename");
+  var photoLabel = document.getElementById("photo-label");
+  var sizeInput = document.getElementById("size-input");
+  var sizeLabel = document.getElementById("size-label");
+  var hollowInput = document.getElementById("hollow-input");
+  var addBaseInput = document.getElementById("add-base-input");
+  var textureInput = document.getElementById("texture-input");
+  var textureRow = document.getElementById("texture-row");
+  var textureHint = document.getElementById("texture-hint");
+  var geometryCuesInput = document.getElementById("geometry-cues-input");
+  var geometryCuesRow = document.getElementById("geometry-cues-row");
+  var geometryCuesHint = document.getElementById("geometry-cues-hint");
+  var btnGenerate = document.getElementById("btn-generate");
+  var btnGenerateAgain = document.getElementById("btn-generate-again");
+  var generateHint = document.getElementById("generate-hint");
+
+  var specModeInput = document.getElementById("spec-mode-input");
+  var specModeRow = document.getElementById("spec-mode-row");
+  var specFields = document.getElementById("spec-fields");
+  var vlmUrlInput = document.getElementById("vlm-url-input");
+  var toleranceInput = document.getElementById("tolerance-input");
+  var specInfoRule = document.getElementById("spec-info-rule");
+  var specInfoGroup = document.getElementById("spec-info-group");
+  var specInfoTitle = document.getElementById("spec-info-title");
+  var specInfoDims = document.getElementById("spec-info-dims");
+
+  var autoDetectInput = document.getElementById("auto-detect-input");
+  var backendSelectRow = document.getElementById("backend-select-row");
+  var autoUnclearBanner = document.getElementById("auto-unclear-banner");
+  var progressClassification = document.getElementById("progress-classification");
+  var classificationInfoRule = document.getElementById("classification-info-rule");
+  var classificationInfoGroup = document.getElementById("classification-info-group");
+  var classificationInfoCategory = document.getElementById("classification-info-category");
+  var classificationInfoMessage = document.getElementById("classification-info-message");
+
+  // A dimensioned spec-sheet part needs true 3D -- heightmap/lithophane
+  // (flat 2D relief) make no sense here, and the dropdown otherwise
+  // defaults to whichever backend sorts alphabetically first ("heightmap"),
+  // which would silently produce a bas-relief plaque instead of a keychain.
+  var SPEC_MODE_PREFERRED_BACKENDS = ["triposr", "hunyuan3d"];
+
+  function preferBackendForSpecMode() {
+    for (var i = 0; i < SPEC_MODE_PREFERRED_BACKENDS.length; i++) {
+      var name = SPEC_MODE_PREFERRED_BACKENDS[i];
+      for (var j = 0; j < backendSelect.options.length; j++) {
+        var opt = backendSelect.options[j];
+        if (opt.value === name && !opt.disabled) {
+          backendSelect.value = name;
+          updateGenerateEnabled();
+          return;
+        }
+      }
+    }
+  }
+
+  // Three mutually-exclusive modes: plain, spec-sheet, auto-detect. Auto
+  // takes priority (it can itself decide to run the spec pipeline) --
+  // checking it turns spec-mode off, and vice versa. Neither mode knows the
+  // backend at submit time, so backend-specific options (texture, geometry
+  // cues) have nothing to attach to yet -- same fields hidden in both.
+  function applyModeVisibility() {
+    var auto = autoDetectInput.checked;
+    var spec = !auto && specModeInput.checked;
+    var hideBackendOptions = auto || spec;
+
+    specModeRow.style.display = auto ? "none" : "flex";
+    backendSelectRow.style.display = auto ? "none" : "flex";
+    specFields.style.display = hideBackendOptions ? "flex" : "none";
+
+    photoLabel.textContent = auto ? "Photo or spec sheet" : (spec ? "Spec sheet" : "Photo");
+    sizeLabel.textContent = hideBackendOptions
+      ? "Size override (mm, optional — uses spec's total_height if blank)"
+      : "Size (mm, longest axis)";
+
+    geometryCuesRow.style.display = hideBackendOptions ? "none" : "flex";
+    geometryCuesHint.style.display = hideBackendOptions ? "none" : "block";
+    if (hideBackendOptions) geometryCuesInput.checked = false;
+    textureRow.style.display = hideBackendOptions ? "none" : "flex";
+    textureHint.style.display = hideBackendOptions ? "none" : "block";
+    if (hideBackendOptions) textureInput.checked = false;
+
+    if (spec) preferBackendForSpecMode();
+    updateGenerateEnabled();
+  }
+
+  autoDetectInput.addEventListener("change", function () {
+    if (autoDetectInput.checked) specModeInput.checked = false;
+    applyModeVisibility();
+  });
+  specModeInput.addEventListener("change", function () {
+    if (specModeInput.checked) autoDetectInput.checked = false;
+    applyModeVisibility();
+  });
+
+  var stageList = document.getElementById("stage-list");
+  var progressFilename = document.getElementById("progress-filename");
+  var progressError = document.getElementById("progress-error");
+
+  var selectedPhoto = null;
+  var btnDownloadStl = document.getElementById("btn-download-stl");
+  var btnDownloadGlb = document.getElementById("btn-download-glb");
+
+  dropPhoto.addEventListener("click", function () { photoInput.click(); });
+  photoInput.addEventListener("change", function (e) {
+    if (e.target.files && e.target.files[0]) setPhoto(e.target.files[0]);
+  });
+  dropPhoto.addEventListener("dragover", function (e) { e.preventDefault(); dropPhoto.classList.add("drop-active"); });
+  dropPhoto.addEventListener("dragleave", function () { dropPhoto.classList.remove("drop-active"); });
+  dropPhoto.addEventListener("drop", function (e) {
+    e.preventDefault();
+    dropPhoto.classList.remove("drop-active");
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) setPhoto(f);
+  });
+
+  function setPhoto(file) {
+    selectedPhoto = file;
+    photoFilename.textContent = file.name;
+    updateGenerateEnabled();
+  }
+
+  function updateGenerateEnabled() {
+    if (autoDetectInput.checked) {
+      btnGenerate.disabled = !selectedPhoto;
+      generateHint.textContent = btnGenerate.disabled ? "Pick a photo to begin." : "";
+      return;
+    }
+    var backendOk = backendSelect.value && !backendSelect.options[backendSelect.selectedIndex].disabled;
+    btnGenerate.disabled = !(selectedPhoto && backendOk);
+    generateHint.textContent = btnGenerate.disabled
+      ? "Pick a photo and an available backend to begin."
+      : "";
+  }
+
+  function loadBackends() {
+    fetch("/api/backends").then(function (r) { return r.json(); }).then(function (backends) {
+      backendSelect.innerHTML = "";
+      backends.forEach(function (b) {
+        var opt = document.createElement("option");
+        opt.value = b.name;
+        opt.textContent = b.name + (b.requires_gpu ? " (gpu)" : " (cpu)") + (b.available ? "" : " — unavailable");
+        opt.disabled = !b.available;
+        if (!b.available) opt.title = b.reason;
+        backendSelect.appendChild(opt);
+      });
+      updateGenerateEnabled();
+    }).catch(function () {
+      announce("Could not reach the API to list backends.");
+    });
+  }
+  backendSelect.addEventListener("change", updateGenerateEnabled);
+  loadBackends();
+
+  btnGenerate.addEventListener("click", function () { submitJob(); });
+  btnGenerateAgain.addEventListener("click", function () {
+    panelLoaded.style.display = "none";
+    panelForm.style.display = "flex";
+  });
+
+  var STAGE_ROWS = {}; // stage name -> row element
+
+  function submitJob() {
+    var autoMode = autoDetectInput.checked;
+    var specMode = !autoMode && specModeInput.checked;
+    var form = new FormData();
+    form.append("image", selectedPhoto);
+    if (!autoMode) form.append("backend", backendSelect.value);
+    form.append("hollow", hollowInput.checked ? "true" : "false");
+    form.append("add_base", addBaseInput.checked ? "true" : "false");
+
+    var endpoint;
+    if (autoMode) {
+      endpoint = "/api/jobs/auto";
+      // Omit "size" entirely when blank -- the server's Optional[float]
+      // parses a missing field as None (falls back to the spec's own
+      // total_height, or a plain 100mm default), but an empty string would
+      // fail float coercion outright.
+      if (sizeInput.value) form.append("size", sizeInput.value);
+      form.append("vlm_url", vlmUrlInput.value || "http://localhost:8082");
+      form.append("tolerance", toleranceInput.value || "15");
+    } else if (specMode) {
+      endpoint = "/api/jobs/spec";
+      if (sizeInput.value) form.append("size", sizeInput.value);
+      form.append("vlm_url", vlmUrlInput.value || "http://localhost:8082");
+      form.append("tolerance", toleranceInput.value || "15");
+    } else {
+      endpoint = "/api/jobs";
+      form.append("size", sizeInput.value || "100");
+      if (geometryCuesInput.checked) form.append("opt", "geometry_cues=true");
+      if (textureInput.checked) form.append("opt", "texture=true");
+    }
+
+    panelForm.style.display = "none";
+    panelLoaded.style.display = "none";
+    panelProgress.style.display = "flex";
+    progressFilename.textContent = selectedPhoto.name + (autoMode ? " · detecting…" : " · " + backendSelect.value);
+    progressError.style.display = "none";
+    progressClassification.style.display = "none";
+    autoUnclearBanner.style.display = "none";
+    stageList.innerHTML = "";
+    STAGE_ROWS = {};
+    stopAllTicks();
+    renderDesignSpec(null);
+    renderClassification(null);
+
+    fetch(endpoint, { method: "POST", body: form })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "submit failed"); });
+        return r.json();
+      })
+      .then(function (data) { trackJob(data.job_id); })
+      .catch(function (err) { showProgressError(err.message); });
+  }
+
+  // What's actually happening server-side during each named stage -- the
+  // stage name alone ("generate", several minutes on some backends) doesn't
+  // tell a waiting user anything. Falls back to no subtitle for a stage name
+  // this map doesn't know about, so an unlisted future stage still renders.
+  var STAGE_DESCRIPTIONS = {
+    "classify": "Asking the VLM what kind of image this is",
+    "route": "Picking a backend (and pipeline) based on that",
+    "extract": "Asking the VLM to read dimensions and view crops off the sheet",
+    "preprocess": "Removing the background, cropping to a square",
+    "geometry-cues": "Estimating a depth map (diagnostic only — doesn't change the generated mesh)",
+    "generate": "Running the 3D generation model — the slow step",
+    "repair": "Closing holes and removing floating fragments so it's watertight",
+    "prep": "Scaling to size, orienting, adding a base",
+    "validate": "Checking wall thickness, overhangs, and build volume",
+    "export": "Writing the STL file"
+  };
+
+  function stageRow(name) {
+    if (STAGE_ROWS[name]) return STAGE_ROWS[name];
+    var row = document.createElement("div");
+    row.className = "stage-row";
+    var desc = STAGE_DESCRIPTIONS[name] || "";
+    row.innerHTML =
+      '<span class="stage-icon pending icon-col" data-icon></span>' +
+      '<span class="text-col">' +
+        '<span class="name">' + name + '</span>' +
+        (desc ? '<span class="desc">' + desc + '</span>' : '') +
+      '</span>' +
+      '<span class="elapsed" data-elapsed></span>';
+    stageList.appendChild(row);
+    STAGE_ROWS[name] = row;
+    return row;
+  }
+
+  var ICONS = {
+    pending: "○", running: "◐", done: "✓", error: "✕"
+  };
+
+  // Stages like "generate" can run for minutes with no sub-progress from the
+  // server (see README's Web API section) -- without a ticking counter the
+  // panel looks frozen. This just proves the connection is alive; it can't
+  // show real percentage-through-the-work since the server doesn't have one.
+  var tickIntervals = {};
+
+  function updateStage(event, startTimes) {
+    var row = stageRow(event.stage);
+    var icon = row.querySelector("[data-icon]");
+    var elapsed = row.querySelector("[data-elapsed]");
+    icon.className = "stage-icon " + event.status;
+    icon.textContent = ICONS[event.status] || "";
+
+    if (tickIntervals[event.stage]) {
+      clearInterval(tickIntervals[event.stage]);
+      delete tickIntervals[event.stage];
+    }
+
+    if (event.status === "start") {
+      startTimes[event.stage] = performance.now();
+      var tick = function () {
+        elapsed.textContent = ((performance.now() - startTimes[event.stage]) / 1000).toFixed(0) + "s…";
+      };
+      tick();
+      tickIntervals[event.stage] = setInterval(tick, 1000);
+    } else {
+      var t0 = startTimes[event.stage];
+      if (t0) elapsed.textContent = ((performance.now() - t0) / 1000).toFixed(1) + "s";
+    }
+  }
+
+  function stopAllTicks() {
+    Object.keys(tickIntervals).forEach(function (stage) { clearInterval(tickIntervals[stage]); });
+    tickIntervals = {};
+  }
+
+  function showProgressError(message) {
+    progressError.textContent = message;
+    progressError.style.display = "block";
+  }
+
+  function trackJob(jobId) {
+    var startTimes = {};
+    var es = new EventSource("/api/jobs/" + jobId + "/events");
+    var finished = false;
+
+    es.onmessage = function (e) {
+      var event = JSON.parse(e.data);
+      updateStage(event, startTimes);
+      if (event.stage === "route" && event.status === "done") {
+        // The routing decision (category, chosen backend, rationale) is on
+        // the job's classification field, not the event itself -- one extra
+        // fetch, same as design_spec, rather than growing the event schema.
+        fetch("/api/jobs/" + jobId).then(function (r) { return r.json(); }).then(function (status) {
+          renderClassification(status.classification);
+          if (status.classification && status.classification.backend) {
+            progressFilename.textContent = selectedPhoto.name + " · " + status.classification.backend;
+          }
+        }).catch(function () {});
+      }
+      if (event.status === "error") {
+        finished = true;
+        es.close();
+        finalizeJob(jobId);
+      }
+    };
+    es.onerror = function () {
+      es.close();
+      if (finished) return;
+      // The stream also closes normally once the executor finishes the
+      // job and the sentinel is sent — check status once rather than
+      // assume every close is a dropped connection.
+      finalizeJob(jobId, /* connectionMayHaveDropped */ true);
+    };
+  }
+
+  function finalizeJob(jobId, connectionMayHaveDropped) {
+    stopAllTicks();
+    var jobStatus = null;
+    fetch("/api/jobs/" + jobId)
+      .then(function (r) { return r.json(); })
+      .then(function (status) {
+        if (status.status === "error") {
+          showProgressError(status.error || "generation failed");
+          return;
+        }
+        if (status.status !== "done") {
+          if (connectionMayHaveDropped) {
+            showProgressError("Connection lost while the job was still " + status.status + ". The server may still be working on it — reload to check, or try again.");
+          }
+          return;
+        }
+        if (status.classification && status.classification.mode === "manual") {
+          // Auto-detect couldn't confidently route this one -- no mesh was
+          // generated. Back to the form, with the rationale shown and the
+          // photo still loaded, so the user only has to pick a backend.
+          autoUnclearBanner.textContent = status.classification.message || "Couldn't tell what kind of image this is -- pick a backend manually.";
+          autoUnclearBanner.style.display = "block";
+          panelProgress.style.display = "none";
+          panelForm.style.display = "flex";
+          autoDetectInput.checked = false;
+          applyModeVisibility();
+          return;
+        }
+        jobStatus = status;
+        // The STL is always the print target, downloadable regardless of
+        // which file the viewer ends up showing (see below). GLB download
+        // only offered when one was actually produced.
+        btnDownloadStl.style.display = "inline-flex";
+        btnDownloadStl.href = "/api/jobs/" + jobId + "/stl";
+        btnDownloadGlb.style.display = jobStatus.has_glb ? "inline-flex" : "none";
+        if (jobStatus.has_glb) btnDownloadGlb.href = "/api/jobs/" + jobId + "/glb";
+        // TripoSR given --opt texture=true produces a colored preview GLB
+        // alongside the print-focused STL; prefer showing that when it
+        // exists. Plain STL otherwise -- this is additive, not a
+        // replacement, for backends/requests that never produce color.
+        var url = "/api/jobs/" + jobId + (jobStatus.has_glb ? "/glb" : "/stl");
+        return fetch(url).then(function (r) { return r.arrayBuffer(); });
+      })
+      .then(function (buf) {
+        if (!buf) return;
+        var mesh = jobStatus.has_glb ? parseGLB(buf) : parseSTL(buf);
+        var name = jobStatus.has_glb ? "result.glb" : "result.stl";
+        return (mesh.isGLB && mesh.hasTexture ? createImageBitmap(mesh.imageBlob) : Promise.resolve(null))
+          .then(function (bitmap) {
+            if (bitmap) mesh.image = bitmap;
+            showResultPanel();
+            // onMeshReady() sets a generic "Parsed · N facets" status pill;
+            // call it before renderIssues() so the real printable/not-
+            // printable verdict is what's left showing, not overwritten.
+            onMeshReady(mesh, name, buf.byteLength);
+            renderIssues(jobStatus);
+          });
+      })
+      .catch(function () {
+        showProgressError("Could not fetch the job result.");
+      });
+  }
+
+  function renderIssues(status) {
+    issueList.innerHTML = "";
+    if (status.issues && status.issues.length) {
+      issuesGroup.style.display = "flex";
+      status.issues.forEach(function (issue) {
+        var div = document.createElement("div");
+        div.textContent = issue;
+        div.className = issue.indexOf("[ERROR]") === 0 ? "error-text" : "warn-text";
+        issueList.appendChild(div);
+      });
+    } else {
+      issuesGroup.style.display = "none";
+    }
+    statStatus.className = "status-pill " + (status.printable ? "ok" : "warn");
+    statStatusText.textContent = status.printable ? "Printable" : "Not printable";
+    renderDesignSpec(status.design_spec);
+    renderClassification(status.classification);
+  }
+
+  function renderDesignSpec(spec) {
+    if (!spec) {
+      specInfoRule.style.display = "none";
+      specInfoGroup.style.display = "none";
+      return;
+    }
+    specInfoRule.style.display = "block";
+    specInfoGroup.style.display = "flex";
+    specInfoTitle.textContent = spec.title || "—";
+    specInfoDims.innerHTML = "";
+    var dims = spec.dimensions_mm || {};
+    Object.keys(dims).forEach(function (key) {
+      var stat = document.createElement("div");
+      stat.className = "stat";
+      stat.innerHTML =
+        '<div class="k">' + key + '</div><div class="v">' + dims[key] + '<small> mm</small></div>';
+      specInfoDims.appendChild(stat);
+    });
+  }
+
+  function renderClassification(classification) {
+    if (!classification) {
+      progressClassification.style.display = "none";
+      classificationInfoRule.style.display = "none";
+      classificationInfoGroup.style.display = "none";
+      return;
+    }
+    var text = classification.category.replace(/_/g, " ") + " — " + classification.message;
+    progressClassification.textContent = text;
+    progressClassification.style.display = "block";
+
+    classificationInfoRule.style.display = "block";
+    classificationInfoGroup.style.display = "flex";
+    classificationInfoCategory.textContent = classification.category.replace(/_/g, " ");
+    classificationInfoMessage.textContent = classification.message || "";
+  }
+
+  function showResultPanel() {
+    panelProgress.style.display = "none";
+    panelForm.style.display = "none";
+    panelLoaded.style.display = "flex";
+  }
+})();
+</script>
+</body>
+</html>

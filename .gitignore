@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+output/
+interim/
+.pytest_cache/
+.ruff_cache/
+
+# CI smoke-test artifacts
+ci.png
+ci.stl
+
+# Derived panels: regenerate with `printable split`, no need to commit.
+assets/examples/*_panels/
+assets/examples/panels/
