@@ -47,7 +47,6 @@ A single full-body collectible tabletop miniature figurine (paladin knight with 
 - **Key options**: `--hollow --hollow-wall 1.6` (hollows interior to save filament and resin), `--max-faces 500000`, `--no-base`
 - **Example command**:
   ```bash
-  # ROCm: prefix with TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
   printable generate assets/examples/figure.jpg -b hunyuan3d --size 80 \
     --hollow --hollow-wall 1.6 --max-faces 500000 --no-base
   ```
@@ -106,7 +105,6 @@ High-detail collectible scale statues featuring complex silhouettes: flowing tra
 - **Primary pipeline**: 3D mesh reconstruction stress testing (`-b hunyuan3d` / `-b triposr`)
 - **Example command**:
   ```bash
-  # ROCm: prefix with TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
   printable generate assets/examples/figure_medusa_scale_statue.jpg -b hunyuan3d --size 120
   ```
 - **Why they fit (Benchmark & Stress-Test)**:
@@ -127,7 +125,6 @@ Contains multi-view renders (Front, Back, Side), dimension callouts (60mm height
   printable generate-spec assets/examples/keychain_boba_spec.jpg
 
   # 2. Generate from extracted view crops and validate dimensions against the spec
-  # (ROCm: prefix with TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1)
   printable generate --spec interim/design_spec.json --spec-all-views -b hunyuan3d
   ```
 - **Why it fits**: Serves as the benchmark test case for the VLM-guided spec extraction and interim processing pipeline documented in [ROADMAP.md](../../ROADMAP.md).

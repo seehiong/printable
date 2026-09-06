@@ -64,11 +64,20 @@ class GenerationResult:
 
     mesh: trimesh.Trimesh
     backend: Backend
-    # True when mesh.visual carries real color/texture data (a backend that
-    # was asked for it via --opt texture=true, and actually produced it) --
-    # set explicitly by the backend rather than re-derived from mesh.visual's
+    # True when a colored/textured preview is available (a backend that was
+    # asked for it via --opt texture=true, and actually produced it) -- set
+    # explicitly by the backend rather than re-derived from mesh.visual's
     # type at every call site. Gates the pipeline's GLB export branch.
     has_color: bool = False
+    # The mesh the GLB preview export should use, when it differs from
+    # `mesh` above. None means "use `mesh` itself" (TripoSR's per-vertex
+    # color path: same geometry, just with real color on mesh.visual).
+    # Set this instead when a backend's colored output has its own
+    # different topology from the plain shape mesh -- e.g. Hunyuan3D's
+    # hy3dpaint, which remeshes and UV-unwraps internally, so its textured
+    # result is a genuinely different mesh object, not `mesh` with color
+    # attached.
+    color_mesh: trimesh.Trimesh | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

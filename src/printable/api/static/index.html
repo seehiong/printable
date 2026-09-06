@@ -165,6 +165,28 @@
   .field-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .field-row label { font-size: 13px; color: var(--text); }
 
+  .tab-group { display: flex; gap: 3px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 3px; }
+  .tab-btn {
+    flex: 1 1 0; font-family: var(--font-body); font-size: 12.5px; font-weight: 500; color: var(--text-dim);
+    background: transparent; border: none; border-radius: 5px; padding: 7px 8px; cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px var(--shadow); }
+
+  .cue-thumbs { display: flex; gap: 10px; flex-wrap: wrap; }
+  .cue-thumb {
+    display: flex; flex-direction: column; align-items: center; gap: 5px;
+    text-decoration: none; color: var(--text-dim); font-size: 11.5px; flex: 1 1 0;
+    min-width: 70px; max-width: 130px;
+  }
+  .cue-thumb img {
+    width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--surface-2); transition: border-color 0.12s ease;
+  }
+  .cue-thumb:hover img { border-color: var(--accent); }
+  .cue-thumb:hover { color: var(--text); }
+
   .drop-photo {
     border: 1.5px dashed var(--border); border-radius: 8px; padding: 18px; text-align: center;
     cursor: pointer; font-size: 13px; color: var(--text-dim); transition: border-color 0.12s ease;
@@ -267,6 +289,18 @@
         <input type="checkbox" id="spec-mode-input">
       </div>
 
+      <div class="field-row" id="sheet-mode-row">
+        <label for="sheet-mode-input">Turnaround sheet mode</label>
+        <input type="checkbox" id="sheet-mode-input">
+      </div>
+      <div class="panel-empty" id="sheet-mode-hint" style="font-size:12px; color:var(--text-faint); line-height:1.5; margin-top:-10px;">
+        Splits a grid of turnaround views into panels, generates from each,
+        and keeps whichever comes out most printable. Same approach
+        Auto-detect uses when it recognizes a turnaround sheet, but explicit
+        and deterministic instead of a VLM's guess -- pick this directly if
+        Auto-detect ever mis-routes one of these (e.g. as a spec sheet).
+      </div>
+
       <div class="stat-group">
         <div class="stat-label" id="photo-label">Photo</div>
         <div class="drop-photo" id="drop-photo">
@@ -302,8 +336,8 @@
       </div>
       <div class="panel-empty" id="texture-hint" style="font-size:12px; color:var(--text-faint); line-height:1.5; margin-top:-10px;">
         Adds a colored preview alongside the print-ready STL, shown here
-        instead once generation finishes. Only triposr supports this option
-        today; hunyuan3d doesn't produce color yet.
+        instead once generation finishes. TripoSR produces a cheap
+        per-vertex preview; Hunyuan3D runs a real (slower) PBR paint pass.
       </div>
 
       <div class="field-row" id="geometry-cues-row">
@@ -326,6 +360,21 @@
         </div>
       </div>
 
+      <div id="sheet-fields" style="display:none; flex-direction:column; gap:18px;">
+        <div class="field">
+          <label for="sheet-rows-input">Rows</label>
+          <input type="number" id="sheet-rows-input" value="2" min="1" step="1">
+        </div>
+        <div class="field">
+          <label for="sheet-cols-input">Columns</label>
+          <input type="number" id="sheet-cols-input" value="2" min="1" step="1">
+        </div>
+        <div class="field">
+          <label for="sheet-trim-input">Trim (px, seam margin)</label>
+          <input type="number" id="sheet-trim-input" value="4" min="0" step="1">
+        </div>
+      </div>
+
       <button class="btn primary" id="btn-generate" disabled>Generate</button>
       <div class="panel-empty" id="generate-hint" style="font-size:12px; color:var(--text-faint); line-height:1.5;">
         Pick a photo and an available backend to begin.
@@ -344,8 +393,39 @@
       <div id="progress-error" class="error-banner" style="display:none;"></div>
     </div>
 
+    <!-- Spec-sheet review: extraction paused, waiting for a human to look
+         at the actual crops before the expensive generation step runs. -->
+    <div id="panel-review" style="display:none; flex-direction:column; gap:18px;">
+      <div class="stat-group">
+        <div class="stat-label">Extracted</div>
+        <div class="field-name" id="review-title">—</div>
+      </div>
+      <div class="panel-empty" style="font-size:12px; color:var(--text-faint); line-height:1.5;">
+        Check these actually look like clean, single-subject crops before generating —
+        a bad crop here (cut off, or catching more than one view) usually means a bad
+        3D result, several minutes later.
+      </div>
+      <hr class="rule">
+      <div class="stat-group">
+        <div class="stat-grid" id="review-dims"></div>
+      </div>
+      <hr class="rule">
+      <div class="stat-group">
+        <div class="stat-label">Views</div>
+        <div class="cue-thumbs" id="review-views"></div>
+      </div>
+      <div id="review-error" class="error-banner" style="display:none;"></div>
+      <button class="btn primary" id="btn-review-confirm">Looks good — generate</button>
+      <button class="btn" id="btn-review-cancel">Start over</button>
+    </div>
+
     <!-- Result: mesh stats + validation report -->
     <div id="panel-loaded" style="display:none; flex-direction:column; gap:18px;">
+      <div class="tab-group" id="file-tabs" style="display:none;">
+        <button class="tab-btn" id="tab-stl" type="button">STL</button>
+        <button class="tab-btn" id="tab-glb" type="button">Colored GLB</button>
+      </div>
+
       <div class="stat-group">
         <div class="stat-label">File</div>
         <div class="field-name" id="stat-filename">—</div>
@@ -396,6 +476,22 @@
         <div class="issue-list" id="issue-list"></div>
       </div>
 
+      <hr class="rule" id="geometry-cues-info-rule" style="display:none;">
+
+      <div class="stat-group" id="geometry-cues-info-group" style="display:none;">
+        <div class="stat-label">Geometry cues (diagnostic)</div>
+        <div class="cue-thumbs">
+          <a class="cue-thumb" id="cue-depth-link" download="depth.png">
+            <img id="cue-depth-img" alt="Depth map">
+            <span>Depth</span>
+          </a>
+          <a class="cue-thumb" id="cue-normal-link" download="normal.png">
+            <img id="cue-normal-img" alt="Normal map">
+            <span>Normal</span>
+          </a>
+        </div>
+      </div>
+
       <a class="btn primary" id="btn-download-stl" download="result.stl">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 2v8m0 0L5 7m3 3 3-3"/><path d="M2.5 11v2a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2"/></svg>
         Download STL
@@ -433,6 +529,13 @@
 
   var panelForm = document.getElementById("panel-form");
   var panelProgress = document.getElementById("panel-progress");
+  var panelReview = document.getElementById("panel-review");
+  var reviewTitle = document.getElementById("review-title");
+  var reviewDims = document.getElementById("review-dims");
+  var reviewViews = document.getElementById("review-views");
+  var reviewError = document.getElementById("review-error");
+  var btnReviewConfirm = document.getElementById("btn-review-confirm");
+  var btnReviewCancel = document.getElementById("btn-review-cancel");
   var panelLoaded = document.getElementById("panel-loaded");
 
   var statFilename = document.getElementById("stat-filename");
@@ -445,6 +548,70 @@
   var statStatusText = document.getElementById("stat-status-text");
   var issuesGroup = document.getElementById("issues-group");
   var issueList = document.getElementById("issue-list");
+
+  // --opt geometry_cues=true writes depth/normal PNGs alongside the STL --
+  // diagnostic only, nothing downstream reads them back in (see
+  // docs/SETUP.md). Shown as small thumbnails (view) that are also direct
+  // download links (download), rather than folding them into the 3D
+  // viewer's STL/GLB tabs above -- these are flat 2D images, not meshes.
+  var geometryCuesInfoRule = document.getElementById("geometry-cues-info-rule");
+  var geometryCuesInfoGroup = document.getElementById("geometry-cues-info-group");
+  var cueDepthLink = document.getElementById("cue-depth-link");
+  var cueDepthImg = document.getElementById("cue-depth-img");
+  var cueNormalLink = document.getElementById("cue-normal-link");
+  var cueNormalImg = document.getElementById("cue-normal-img");
+
+  function renderGeometryCues(jobId, hasCues) {
+    if (!hasCues) {
+      geometryCuesInfoRule.style.display = "none";
+      geometryCuesInfoGroup.style.display = "none";
+      return;
+    }
+    geometryCuesInfoRule.style.display = "block";
+    geometryCuesInfoGroup.style.display = "flex";
+
+    var depthUrl = "/api/jobs/" + jobId + "/depth";
+    cueDepthLink.href = depthUrl;
+    cueDepthImg.src = depthUrl;
+    cueDepthLink.style.display = "flex";
+
+    // The normal map is optional (some estimators only produce depth --
+    // see DepthNormalResult's own docstring) and JobStatus.has_geometry_cues
+    // only means "at least one cue exists," not which ones -- try loading
+    // it, hide this thumb on a 404 instead of asking the server twice.
+    var normalUrl = "/api/jobs/" + jobId + "/normal";
+    cueNormalLink.style.display = "flex";
+    cueNormalImg.onerror = function () { cueNormalLink.style.display = "none"; };
+    cueNormalLink.href = normalUrl;
+    cueNormalImg.src = normalUrl;
+  }
+
+  // A job result can carry both an STL (the print target) and a colored
+  // GLB preview (--opt texture=true) -- both get fetched and parsed once,
+  // kept here, and the tabs below just re-render whichever is already in
+  // memory instead of re-fetching. null for a local-file-open (drag/drop
+  // or the file picker): that flow only ever has one arbitrary mesh, no
+  // server job, so tabs never apply there.
+  var fileTabs = document.getElementById("file-tabs");
+  var tabStl = document.getElementById("tab-stl");
+  var tabGlb = document.getElementById("tab-glb");
+  var loadedFiles = { stl: null, glb: null };
+  var currentJobStatus = null;
+
+  function selectFileTab(which) {
+    var entry = loadedFiles[which];
+    if (!entry) return;
+    fileTabs.style.display = (loadedFiles.stl && loadedFiles.glb) ? "flex" : "none";
+    tabStl.classList.toggle("active", which === "stl");
+    tabGlb.classList.toggle("active", which === "glb");
+    onMeshReady(entry.mesh, entry.name, entry.byteSize);
+    // onMeshReady sets a generic "Parsed · N facets" status pill; restore
+    // the real printable/not-printable verdict, same for either file since
+    // validation ran once against the STL regardless of which tab this is.
+    if (currentJobStatus) renderIssues(currentJobStatus);
+  }
+  tabStl.addEventListener("click", function () { selectFileTab("stl"); });
+  tabGlb.addEventListener("click", function () { selectFileTab("glb"); });
 
   document.getElementById("btn-open").addEventListener("click", function () { fileInput.click(); });
   document.getElementById("toggle-aside").addEventListener("click", function () {
@@ -485,9 +652,16 @@
         var mesh = parseSTL(reader.result);
         showResultPanel();
         // Already a local file -- nothing on the server to download, and
-        // leaving a previous job's link visible here would be misleading.
+        // leaving a previous job's link (or its file tabs) visible here
+        // would be misleading. Only ever one arbitrary mesh in this flow,
+        // so tabs never apply.
         btnDownloadStl.style.display = "none";
         btnDownloadGlb.style.display = "none";
+        loadedFiles.stl = null;
+        loadedFiles.glb = null;
+        currentJobStatus = null;
+        fileTabs.style.display = "none";
+        renderGeometryCues(null, false);
         onMeshReady(mesh, file.name, file.size);
       } catch (err) {
         announce("Could not read " + file.name + " as an STL file.");
@@ -1234,15 +1408,23 @@
   var classificationInfoCategory = document.getElementById("classification-info-category");
   var classificationInfoMessage = document.getElementById("classification-info-message");
 
-  // A dimensioned spec-sheet part needs true 3D -- heightmap/lithophane
-  // (flat 2D relief) make no sense here, and the dropdown otherwise
-  // defaults to whichever backend sorts alphabetically first ("heightmap"),
-  // which would silently produce a bas-relief plaque instead of a keychain.
-  var SPEC_MODE_PREFERRED_BACKENDS = ["triposr", "hunyuan3d"];
+  var sheetModeInput = document.getElementById("sheet-mode-input");
+  var sheetModeRow = document.getElementById("sheet-mode-row");
+  var sheetFields = document.getElementById("sheet-fields");
+  var sheetRowsInput = document.getElementById("sheet-rows-input");
+  var sheetColsInput = document.getElementById("sheet-cols-input");
+  var sheetTrimInput = document.getElementById("sheet-trim-input");
 
-  function preferBackendForSpecMode() {
-    for (var i = 0; i < SPEC_MODE_PREFERRED_BACKENDS.length; i++) {
-      var name = SPEC_MODE_PREFERRED_BACKENDS[i];
+  // A dimensioned spec-sheet part or a multi-view turnaround needs true 3D
+  // -- heightmap/lithophane (flat 2D relief) make no sense here, and the
+  // dropdown otherwise defaults to whichever backend sorts alphabetically
+  // first ("heightmap"), which would silently produce a bas-relief plaque
+  // instead of a keychain (or one panel of a character sheet).
+  var OBJECT_MODE_PREFERRED_BACKENDS = ["triposr", "hunyuan3d"];
+
+  function preferObjectReconstructionBackend() {
+    for (var i = 0; i < OBJECT_MODE_PREFERRED_BACKENDS.length; i++) {
+      var name = OBJECT_MODE_PREFERRED_BACKENDS[i];
       for (var j = 0; j < backendSelect.options.length; j++) {
         var opt = backendSelect.options[j];
         if (opt.value === name && !opt.disabled) {
@@ -1254,21 +1436,27 @@
     }
   }
 
-  // Three mutually-exclusive modes: plain, spec-sheet, auto-detect. Auto
-  // takes priority (it can itself decide to run the spec pipeline) --
-  // checking it turns spec-mode off, and vice versa. Neither mode knows the
-  // backend at submit time, so backend-specific options (texture, geometry
-  // cues) have nothing to attach to yet -- same fields hidden in both.
+  // Four mutually-exclusive modes: plain, spec-sheet, turnaround-sheet,
+  // auto-detect. Auto takes priority (it can itself decide to run either
+  // sheet pipeline) -- checking it turns the other two off, and checking
+  // either of those turns auto (and each other) off. Auto and spec don't
+  // know the backend at submit time, so backend-specific options (texture,
+  // geometry cues) have nothing to attach to yet; sheet mode DOES know it
+  // (picked explicitly, same as plain mode), so it keeps them.
   function applyModeVisibility() {
     var auto = autoDetectInput.checked;
     var spec = !auto && specModeInput.checked;
+    var sheet = !auto && !spec && sheetModeInput.checked;
     var hideBackendOptions = auto || spec;
 
     specModeRow.style.display = auto ? "none" : "flex";
+    sheetModeRow.style.display = auto ? "none" : "flex";
     backendSelectRow.style.display = auto ? "none" : "flex";
-    specFields.style.display = hideBackendOptions ? "flex" : "none";
+    specFields.style.display = spec ? "flex" : "none";
+    sheetFields.style.display = sheet ? "flex" : "none";
 
-    photoLabel.textContent = auto ? "Photo or spec sheet" : (spec ? "Spec sheet" : "Photo");
+    photoLabel.textContent = auto ? "Photo or spec sheet"
+      : (spec ? "Spec sheet" : (sheet ? "Turnaround sheet" : "Photo"));
     sizeLabel.textContent = hideBackendOptions
       ? "Size override (mm, optional — uses spec's total_height if blank)"
       : "Size (mm, longest axis)";
@@ -1280,16 +1468,20 @@
     textureHint.style.display = hideBackendOptions ? "none" : "block";
     if (hideBackendOptions) textureInput.checked = false;
 
-    if (spec) preferBackendForSpecMode();
+    if (spec || sheet) preferObjectReconstructionBackend();
     updateGenerateEnabled();
   }
 
   autoDetectInput.addEventListener("change", function () {
-    if (autoDetectInput.checked) specModeInput.checked = false;
+    if (autoDetectInput.checked) { specModeInput.checked = false; sheetModeInput.checked = false; }
     applyModeVisibility();
   });
   specModeInput.addEventListener("change", function () {
-    if (specModeInput.checked) autoDetectInput.checked = false;
+    if (specModeInput.checked) { autoDetectInput.checked = false; sheetModeInput.checked = false; }
+    applyModeVisibility();
+  });
+  sheetModeInput.addEventListener("change", function () {
+    if (sheetModeInput.checked) { autoDetectInput.checked = false; specModeInput.checked = false; }
     applyModeVisibility();
   });
 
@@ -1363,6 +1555,7 @@
   function submitJob() {
     var autoMode = autoDetectInput.checked;
     var specMode = !autoMode && specModeInput.checked;
+    var sheetMode = !autoMode && !specMode && sheetModeInput.checked;
     var form = new FormData();
     form.append("image", selectedPhoto);
     if (!autoMode) form.append("backend", backendSelect.value);
@@ -1384,6 +1577,14 @@
       if (sizeInput.value) form.append("size", sizeInput.value);
       form.append("vlm_url", vlmUrlInput.value || "http://localhost:8082");
       form.append("tolerance", toleranceInput.value || "15");
+    } else if (sheetMode) {
+      endpoint = "/api/jobs/sheet";
+      form.append("size", sizeInput.value || "100");
+      form.append("rows", sheetRowsInput.value || "2");
+      form.append("cols", sheetColsInput.value || "2");
+      form.append("trim", sheetTrimInput.value || "4");
+      if (geometryCuesInput.checked) form.append("opt", "geometry_cues=true");
+      if (textureInput.checked) form.append("opt", "texture=true");
     } else {
       endpoint = "/api/jobs";
       form.append("size", sizeInput.value || "100");
@@ -1393,6 +1594,7 @@
 
     panelForm.style.display = "none";
     panelLoaded.style.display = "none";
+    panelReview.style.display = "none";
     panelProgress.style.display = "flex";
     progressFilename.textContent = selectedPhoto.name + (autoMode ? " · detecting…" : " · " + backendSelect.value);
     progressError.style.display = "none";
@@ -1537,6 +1739,10 @@
           showProgressError(status.error || "generation failed");
           return;
         }
+        if (status.status === "awaiting_confirmation") {
+          showReviewPanel(jobId, status);
+          return;
+        }
         if (status.status !== "done") {
           if (connectionMayHaveDropped) {
             showProgressError("Connection lost while the job was still " + status.status + ". The server may still be working on it — reload to check, or try again.");
@@ -1557,38 +1763,107 @@
         }
         jobStatus = status;
         // The STL is always the print target, downloadable regardless of
-        // which file the viewer ends up showing (see below). GLB download
-        // only offered when one was actually produced.
+        // which tab the viewer defaults to. GLB download only offered when
+        // one was actually produced.
         btnDownloadStl.style.display = "inline-flex";
         btnDownloadStl.href = "/api/jobs/" + jobId + "/stl";
         btnDownloadGlb.style.display = jobStatus.has_glb ? "inline-flex" : "none";
         if (jobStatus.has_glb) btnDownloadGlb.href = "/api/jobs/" + jobId + "/glb";
-        // TripoSR given --opt texture=true produces a colored preview GLB
-        // alongside the print-focused STL; prefer showing that when it
-        // exists. Plain STL otherwise -- this is additive, not a
-        // replacement, for backends/requests that never produce color.
-        var url = "/api/jobs/" + jobId + (jobStatus.has_glb ? "/glb" : "/stl");
-        return fetch(url).then(function (r) { return r.arrayBuffer(); });
+        renderGeometryCues(jobId, jobStatus.has_geometry_cues);
+
+        var stlPromise = fetch("/api/jobs/" + jobId + "/stl").then(function (r) { return r.arrayBuffer(); });
+        var glbPromise = jobStatus.has_glb
+          ? fetch("/api/jobs/" + jobId + "/glb").then(function (r) { return r.arrayBuffer(); })
+          : Promise.resolve(null);
+        return Promise.all([stlPromise, glbPromise]);
       })
-      .then(function (buf) {
-        if (!buf) return;
-        var mesh = jobStatus.has_glb ? parseGLB(buf) : parseSTL(buf);
-        var name = jobStatus.has_glb ? "result.glb" : "result.stl";
-        return (mesh.isGLB && mesh.hasTexture ? createImageBitmap(mesh.imageBlob) : Promise.resolve(null))
+      .then(function (bufs) {
+        if (!bufs) return;
+        var stlBuf = bufs[0], glbBuf = bufs[1];
+        var stlMesh = parseSTL(stlBuf);
+        var glbMesh = glbBuf ? parseGLB(glbBuf) : null;
+
+        return (glbMesh && glbMesh.hasTexture ? createImageBitmap(glbMesh.imageBlob) : Promise.resolve(null))
           .then(function (bitmap) {
-            if (bitmap) mesh.image = bitmap;
+            if (bitmap && glbMesh) glbMesh.image = bitmap;
+            loadedFiles.stl = { mesh: stlMesh, name: "result.stl", byteSize: stlBuf.byteLength };
+            loadedFiles.glb = glbMesh ? { mesh: glbMesh, name: "result.glb", byteSize: glbBuf.byteLength } : null;
+            currentJobStatus = jobStatus;
             showResultPanel();
-            // onMeshReady() sets a generic "Parsed · N facets" status pill;
-            // call it before renderIssues() so the real printable/not-
-            // printable verdict is what's left showing, not overwritten.
-            onMeshReady(mesh, name, buf.byteLength);
-            renderIssues(jobStatus);
+            // GLB given priority as the default tab when both exist -- it's
+            // the more informative view (texture=true was asked for on
+            // purpose); STL stays one click away, same file the print
+            // target actually is.
+            selectFileTab(loadedFiles.glb ? "glb" : "stl");
           });
       })
       .catch(function () {
         showProgressError("Could not fetch the job result.");
       });
   }
+
+  function showReviewPanel(jobId, status) {
+    panelProgress.style.display = "none";
+    panelForm.style.display = "none";
+    panelLoaded.style.display = "none";
+    panelReview.style.display = "flex";
+    reviewError.style.display = "none";
+    btnReviewConfirm.disabled = false;
+
+    var spec = status.design_spec || {};
+    reviewTitle.textContent = spec.title || "—";
+
+    reviewDims.innerHTML = "";
+    var dims = spec.dimensions_mm || {};
+    Object.keys(dims).forEach(function (key) {
+      var stat = document.createElement("div");
+      stat.className = "stat";
+      stat.innerHTML =
+        '<div class="k">' + key + '</div><div class="v">' + dims[key] + '<small> mm</small></div>';
+      reviewDims.appendChild(stat);
+    });
+
+    reviewViews.innerHTML = "";
+    var views = spec.views || {};
+    Object.keys(views).forEach(function (name) {
+      // Full-size in a new tab on click -- these crops are exactly what
+      // the reviewer needs to judge closely, and a thumbnail alone can
+      // hide the kind of clipping this whole panel exists to catch.
+      var url = "/api/jobs/" + jobId + "/view/" + encodeURIComponent(name);
+      var a = document.createElement("a");
+      a.className = "cue-thumb";
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.innerHTML = '<img src="' + url + '" alt="' + name + '"><span>' + name + '</span>';
+      reviewViews.appendChild(a);
+    });
+
+    btnReviewConfirm.onclick = function () { confirmSpecJob(jobId); };
+  }
+
+  function confirmSpecJob(jobId) {
+    btnReviewConfirm.disabled = true;
+    fetch("/api/jobs/" + jobId + "/confirm", { method: "POST" })
+      .then(function (r) {
+        if (!r.ok) {
+          return r.json().then(function (e) { throw new Error(e.detail || e.error || "confirm failed"); });
+        }
+        panelReview.style.display = "none";
+        panelProgress.style.display = "flex";
+        trackJob(jobId);
+      })
+      .catch(function (err) {
+        btnReviewConfirm.disabled = false;
+        reviewError.textContent = err.message;
+        reviewError.style.display = "block";
+      });
+  }
+
+  btnReviewCancel.addEventListener("click", function () {
+    panelReview.style.display = "none";
+    panelForm.style.display = "flex";
+  });
 
   function renderIssues(status) {
     issueList.innerHTML = "";

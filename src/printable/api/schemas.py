@@ -36,3 +36,4 @@ class JobStatus(BaseModel):
     design_spec: dict[str, Any] | None = None
     classification: dict[str, Any] | None = None
     has_glb: bool = False
+    has_geometry_cues: bool = False

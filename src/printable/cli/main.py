@@ -146,7 +146,7 @@ def _cmd_generate_sheet(args: argparse.Namespace) -> int:
     import tempfile
 
     from printable.backends.sheet import split_sheet
-    from printable.pipeline.run import run
+    from printable.pipeline.run import export_winner, run
     from printable.pipeline.select import pick_best
 
     settings = _settings_from_args(args)
@@ -199,12 +199,14 @@ def _cmd_generate_sheet(args: argparse.Namespace) -> int:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 result.mesh.export(dest)
                 print(f"  wrote {dest}")
+                if result.color_mesh is not None:
+                    glb_dest = dest.with_suffix(".glb")
+                    result.color_mesh.export(glb_dest)
+                    print(f"  wrote {glb_dest}")
 
-        out.parent.mkdir(parents=True, exist_ok=True)
         export_start = time.perf_counter()
-        winner.mesh.export(out)
+        export_winner(winner, out)
         winner.timings["export"] = time.perf_counter() - export_start
-        winner.output_path = out
 
     _print_generate_result(winner)
     return 0 if winner.report.printable else 1
@@ -216,7 +218,7 @@ def _cmd_generate_spec_views(args: argparse.Namespace, spec: dict) -> int:
     approach, but sourcing candidates from an already-extracted spec's view
     crops instead of a fresh grid split.
     """
-    from printable.pipeline.run import run
+    from printable.pipeline.run import export_winner, run
     from printable.pipeline.select import pick_best
     from printable.pipeline.validate import check_dimension_targets
 
@@ -281,12 +283,14 @@ def _cmd_generate_spec_views(args: argparse.Namespace, spec: dict) -> int:
             dest.parent.mkdir(parents=True, exist_ok=True)
             result.mesh.export(dest)
             print(f"  wrote {dest}")
+            if result.color_mesh is not None:
+                glb_dest = dest.with_suffix(".glb")
+                result.color_mesh.export(glb_dest)
+                print(f"  wrote {glb_dest}")
 
-    out.parent.mkdir(parents=True, exist_ok=True)
     export_start = time.perf_counter()
-    winner.mesh.export(out)
+    export_winner(winner, out)
     winner.timings["export"] = time.perf_counter() - export_start
-    winner.output_path = out
 
     _print_generate_result(winner)
     return 0 if winner.report.printable else 1

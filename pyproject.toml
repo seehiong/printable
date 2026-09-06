@@ -1,6 +1,6 @@
 [project]
 name = "printable"
-version = "0.1.0"
+version = "0.1.1"
 description = "Turn a photo into a 3D-printable STL"
 readme = "README.md"
 license = "MIT"
@@ -48,9 +48,14 @@ spec = [
     "httpx>=0.27",
 ]
 # Depth/normal geometry-cues stage. transformers-native -- no separate
-# vendored repo, unlike the AI backends in backends/ai.py.
+# vendored repo, unlike the AI backends in backends/ai.py. No version floor
+# needed: uses a DPT-based model (registered in transformers well before
+# this project's actual floor, transformers==4.35.0, pinned by TripoSR/
+# Hunyuan3D) rather than Depth-Anything, whose config needs
+# transformers>=4.49 -- see backends/depth.py's DEFAULT_MODEL comment.
+# Coexists with a GPU backend's own pin now; previously it couldn't.
 depth = [
-    "transformers>=4.49",
+    "transformers",
 ]
 
 [project.scripts]

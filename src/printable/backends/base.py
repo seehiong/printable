@@ -114,10 +114,14 @@ class BackendRegistry:
         still fully alive, than to leave that to whatever order interpreter
         finalization's own GC happens to tear things down in. (Investigating
         a real "corrupted double-linked list" crash at the end of this
-        project's own test suite eventually traced it to an unrelated stray
-        dependency, pymeshlab -- see its removal commit -- not to cached
-        backend instances specifically. Kept anyway as cheap, real hygiene:
-        it does no harm and rules out one class of teardown race outright.)
+        project's own test suite traced it to pymeshlab's bundled Qt
+        runtime crashing during interpreter finalization -- not to cached
+        backend instances specifically, and not a stray dependency either
+        (an earlier pass wrongly concluded that and uninstalled it, which
+        broke hy3dshape's postprocessors.py; see tests/conftest.py's
+        pytest_unconfigure for the actual fix). Kept anyway as cheap, real
+        hygiene: it does no harm and rules out one class of teardown race
+        outright.)
         Call this from a session-scoped test fixture, not per-module --
         this registry is a process-wide singleton shared across every test
         module that loads a real GPU backend."""

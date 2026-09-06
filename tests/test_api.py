@@ -13,6 +13,7 @@ import time
 
 import pytest
 import trimesh
+from PIL import Image
 
 pytest.importorskip("fastapi")
 
@@ -121,6 +122,51 @@ def test_job_stream_emits_geometry_cues_stage_when_requested(client, sample_imag
     assert stages.get("geometry-cues") == ["start", "done"], stages
 
 
+def test_geometry_cues_downloadable_after_completion(client, sample_image, monkeypatch):
+    """has_geometry_cues + /depth + /normal: the actual estimator needs the
+    `depth` extra (transformers>=4.49), which conflicts with TripoSR's
+    transformers==4.35.0 pin (see docs/SETUP.md) and so is never installed
+    alongside a GPU backend -- monkeypatch estimate_depth_normal itself so
+    this test exercises the real save/serve path deterministically,
+    independent of whether a real depth model is importable here."""
+    import numpy as np
+
+    from printable.types import DepthNormalResult
+
+    fake = DepthNormalResult(
+        depth=np.linspace(0.0, 1.0, 16 * 16, dtype=np.float32).reshape(16, 16),
+        normal=np.zeros((16, 16, 3), dtype=np.float32),
+        source="fake-for-test",
+    )
+    monkeypatch.setattr("printable.backends.depth.available", lambda: (True, "ok"))
+    monkeypatch.setattr("printable.backends.depth.estimate_depth_normal", lambda image: fake)
+
+    job_id = _submit(client, sample_image, opt="geometry_cues=true")
+    status = _wait_for_terminal(client, job_id)
+    assert status["status"] == "done", status
+    assert status["has_geometry_cues"] is True, status
+
+    depth_resp = client.get(f"/api/jobs/{job_id}/depth")
+    assert depth_resp.status_code == 200
+    assert depth_resp.headers["content-type"] == "image/png"
+    depth_img = Image.open(io.BytesIO(depth_resp.content))
+    assert depth_img.size == (16, 16)
+
+    normal_resp = client.get(f"/api/jobs/{job_id}/normal")
+    assert normal_resp.status_code == 200
+    assert normal_resp.headers["content-type"] == "image/png"
+
+
+def test_geometry_cues_endpoints_404_when_not_requested(client, sample_image):
+    job_id = _submit(client, sample_image)
+    status = _wait_for_terminal(client, job_id)
+    assert status["status"] == "done", status
+    assert status["has_geometry_cues"] is False
+
+    assert client.get(f"/api/jobs/{job_id}/depth").status_code == 404
+    assert client.get(f"/api/jobs/{job_id}/normal").status_code == 404
+
+
 def test_download_stl_after_completion(client, sample_image):
     job_id = _submit(client, sample_image)
     _wait_for_terminal(client, job_id)
@@ -183,12 +229,14 @@ def test_job_stream_emits_export_glb_stage_for_colored_backend(client, sample_im
 
 
 # Deliberately only one real-GPU-backend test in this file. Loading a
-# second real GPU backend (a different one, e.g. spar3d while triposr's
-# above) in the same process hung this entire machine hard enough to need
-# a physical reboot -- not a slow test, an OS-level lockup, apparently from
-# switching GPU backends within one process on this ROCm nightly build. Do
-# not add a second real-GPU-backend test to this file without reading that
-# warning in docs/SETUP.md's Troubleshooting section first.
+# second real GPU backend (a since-dropped one, while triposr's above was
+# already loaded) in the same process hung this entire machine hard enough
+# to need a physical reboot -- not a slow test, an OS-level lockup from
+# switching GPU backends within one process. Confirmed with that backend,
+# but the underlying finding still applies to today's TripoSR/Hunyuan3D
+# pairing -- see docs/SETUP.md's Troubleshooting section. Do not add a
+# second real-GPU-backend test to this file without reading that warning
+# first.
 
 
 # --- auto mode ---------------------------------------------------------------
@@ -271,7 +319,25 @@ def _vlm_server_reachable() -> bool:
         return False
 
 
+def _wait_for_status(client: TestClient, job_id: str, want: tuple[str, ...], timeout: float) -> dict:
+    deadline = time.time() + timeout
+    status = None
+    while time.time() < deadline:
+        status = client.get(f"/api/jobs/{job_id}").json()
+        if status["status"] in want:
+            return status
+        time.sleep(0.5)
+    raise TimeoutError(f"job {job_id} did not reach {want} within {timeout}s (last: {status})")
+
+
 def test_submit_spec_job_end_to_end(client):
+    """Two-phase since 2026-09-02: extraction pauses at
+    "awaiting_confirmation" for a human to look at the actual crops
+    (GET .../view/{name}) before the expensive generation step runs --
+    see api/jobs.py's Job.status docstring for why. This test plays both
+    halves: confirm immediately, like a UI that shows the crops and the
+    user clicks straight through.
+    """
     if not _vlm_server_reachable():
         pytest.skip("vlm-server not running at localhost:8082")
     if not _backend_available(client, "triposr"):
@@ -287,27 +353,120 @@ def test_submit_spec_job_end_to_end(client):
     assert resp.status_code == 202, resp.text
     job_id = resp.json()["job_id"]
 
-    # 300s, not a round guess: a real run of this exact job measured 188s
-    # end to end, and nearly all of it (~161s) is the VLM "extract" stage's
-    # own inference latency against a 27B model, not mesh generation --
-    # 180s was cutting it too close. Letting the job actually finish also
-    # avoids returning while its background ThreadPoolExecutor worker
-    # (jobs.py) is still mid-generate; racing that against interpreter
-    # teardown at the end of the test session risks corrupting the process
-    # (seen as a "corrupted double-linked list" glibc abort after a run
-    # that timed out here).
-    deadline = time.time() + 300.0
-    status = None
-    while time.time() < deadline:
-        status = client.get(f"/api/jobs/{job_id}").json()
-        if status["status"] in ("done", "error"):
-            break
-        time.sleep(0.5)
-    assert status is not None and status["status"] == "done", status
+    # This sheet's extraction time is genuinely bimodal, not just slow: one
+    # real run succeeded in 161s, another spent the client's entire 1500s
+    # timeout (vlm_client.DEFAULT_TIMEOUT) retrying box checks before
+    # raising -- both are real VLM behavior on a hard sheet, not a bug. The
+    # wait here has to clear that ceiling, or it fails on its own polling
+    # timeout before the job ever reaches a real terminal state, which
+    # reads as "broken" when it's actually just "still extracting."
+    status = _wait_for_status(client, job_id, ("awaiting_confirmation", "error"), timeout=1560.0)
+    assert status["status"] == "awaiting_confirmation", status
 
     spec = status["design_spec"]
     assert spec is not None
     assert {"dimensions_mm", "print_constraints", "views"} <= spec.keys()
+    assert spec["views"], "expected at least one named view to review"
+
+    # The actual point of pausing here: the crop is a real, fetchable
+    # image, not just a name in the spec -- a UI can show it before the
+    # user commits to generation.
+    one_view = next(iter(spec["views"]))
+    view_resp = client.get(f"/api/jobs/{job_id}/view/{one_view}")
+    assert view_resp.status_code == 200
+    assert view_resp.headers["content-type"] == "image/png"
+    crop = Image.open(io.BytesIO(view_resp.content))
+    assert crop.size[0] > 0 and crop.size[1] > 0
+
+    confirm_resp = client.post(f"/api/jobs/{job_id}/confirm")
+    assert confirm_resp.status_code == 202, confirm_resp.text
+
+    # Letting the job actually finish avoids returning while its background
+    # ThreadPoolExecutor worker (jobs.py) is still mid-generate; racing
+    # that against interpreter teardown at the end of the test session
+    # risks corrupting the process (seen as a "corrupted double-linked
+    # list" glibc abort after a run that timed out here).
+    status = _wait_for_status(client, job_id, ("done", "error"), timeout=120.0)
+    assert status["status"] == "done", status
+
+    stl_resp = client.get(f"/api/jobs/{job_id}/stl")
+    assert stl_resp.status_code == 200
+    mesh = trimesh.load(io.BytesIO(stl_resp.content), file_type="stl")
+    assert len(mesh.faces) > 0
+
+
+def test_confirm_rejected_when_not_awaiting_confirmation(client, sample_image):
+    """/confirm only makes sense for a spec-sheet job paused for review --
+    calling it on an ordinary job (never reaches "awaiting_confirmation"
+    at all) should fail clearly, not silently do something."""
+    job_id = _submit(client, sample_image)
+    _wait_for_terminal(client, job_id)
+    resp = client.post(f"/api/jobs/{job_id}/confirm")
+    assert resp.status_code == 400, resp.text
+
+
+def test_view_endpoint_rejects_unknown_view_name(client, sample_image):
+    """Whitelisted against the job's own design_spec views, not an open
+    filename read -- a job with no design_spec at all (never went through
+    spec extraction) must reject every name, not serve whatever happens
+    to be sitting in its directory (input image, result.stl, ...)."""
+    job_id = _submit(client, sample_image)
+    _wait_for_terminal(client, job_id)
+    resp = client.get(f"/api/jobs/{job_id}/view/front")
+    assert resp.status_code == 404
+    # Confirm it's really the whitelist rejecting this, not a missing-file
+    # 404 for an unrelated reason -- "input" matches this job's own actual
+    # saved image filename stem, so this specifically checks the endpoint
+    # doesn't just serve anything under job.dir by name.
+    resp2 = client.get(f"/api/jobs/{job_id}/view/input")
+    assert resp2.status_code == 404
+
+
+def test_confirm_resumes_and_completes_generation(client, sample_image, monkeypatch):
+    """Fast, deterministic counterpart to test_submit_spec_job_end_to_end
+    above: mocks the VLM call itself so this exercises the actual
+    extract -> awaiting_confirmation -> view -> confirm -> generate wiring
+    on every run, CPU-only, independent of a live VLM server's latency or
+    its (real, documented above) occasional total extraction failure on a
+    hard sheet -- that test proves the VLM integration works when it's up;
+    this one proves the job-state-machine plumbing around it always does.
+    """
+    img = Image.open(sample_image)
+    w, h = img.size
+    fake_spec = {
+        "title": "Test Widget",
+        "dimensions_mm": {"total_height": 40.0},
+        "print_constraints": {"min_wall_thickness_mm": 0.8},
+        "views": {"front": {"box_2d": [0, 0, 1000, 1000]}},
+    }
+    monkeypatch.setattr("printable.vlm_client.fetch_design_spec", lambda *a, **k: fake_spec)
+
+    with open(sample_image, "rb") as f:
+        resp = client.post(
+            "/api/jobs/spec",
+            files={"image": ("sample.png", f, "image/png")},
+            data={"backend": "lithophane"},
+        )
+    assert resp.status_code == 202, resp.text
+    job_id = resp.json()["job_id"]
+
+    status = _wait_for_status(client, job_id, ("awaiting_confirmation", "error"), timeout=30.0)
+    assert status["status"] == "awaiting_confirmation", status
+    assert status["design_spec"]["views"] == fake_spec["views"]
+
+    # box_2d [0, 0, 1000, 1000] covers the whole normalized 0-1000 range,
+    # so the crop should be the entire sheet unchanged.
+    view_resp = client.get(f"/api/jobs/{job_id}/view/front")
+    assert view_resp.status_code == 200
+    assert view_resp.headers["content-type"] == "image/png"
+    crop = Image.open(io.BytesIO(view_resp.content))
+    assert crop.size == (w, h)
+
+    confirm_resp = client.post(f"/api/jobs/{job_id}/confirm")
+    assert confirm_resp.status_code == 202, confirm_resp.text
+
+    status = _wait_for_status(client, job_id, ("done", "error"), timeout=30.0)
+    assert status["status"] == "done", status
 
     stl_resp = client.get(f"/api/jobs/{job_id}/stl")
     assert stl_resp.status_code == 200

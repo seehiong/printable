@@ -9,13 +9,20 @@ import httpx
 
 DEFAULT_VLM_URL = "http://localhost:8082"
 # The server's /extract does one metadata call plus one call per view (each
-# with a possible repair retry), and the resident model as of this writing
-# (Qwen3.8-27B) reasons heavily before answering -- single calls have run
-# past 1800 completion tokens at ~20 tok/s, so four-plus sequential calls can
-# comfortably exceed two minutes even without a retry. /classify is a single
-# call and usually much faster, but shares the same generous timeout since
-# the same model's reasoning length is unpredictable per-call.
-DEFAULT_TIMEOUT = 900.0
+# with up to two possible repair retries as of 2026-09-02, up from one --
+# see ~/vlm-server/server.py's MAX_REPAIR_ATTEMPTS), and the resident model
+# as of this writing (Qwen3.8-27B) reasons heavily before answering --
+# single calls have run past 1800 completion tokens at ~20 tok/s, so
+# four-plus sequential calls can comfortably exceed two minutes even
+# without a retry. Repair calls specifically now allow up to 9000 tokens
+# (~450s at that rate), also up from the first pass's 6000 -- a real
+# degraded run (a hard sheet burning every attempt across the metadata
+# call, two named views, and the primary-view fallback) can now chain
+# through around 10 model calls in the worst case, several of them at the
+# larger repair budget. /classify is a single call and usually much
+# faster, but shares the same generous timeout since the same model's
+# reasoning length is unpredictable per-call.
+DEFAULT_TIMEOUT = 1500.0
 
 
 def _post_image(endpoint: str, image_path: Path, vlm_url: str, timeout: float) -> dict[str, Any]:

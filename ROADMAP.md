@@ -177,9 +177,64 @@ retrying a specific view no longer needs the ~10-20s VLM round trip, and
 parser needing its own copy of all of them.
 
 ### Phase 4: Web UI Enhancements (`printable serve`)
-- Add **Spec Sheet Mode** toggle in the browser UI.
-- Display an interactive preview of the extracted `design_spec.json` and cropped views.
-- Allow the user to review and tweak extracted dimensions before launching the final generation.
+- **Spec Sheet Mode** toggle: built. Shows the extracted `design_spec.json`
+  (title, dimensions) and cropped views once classification/extraction
+  finishes, before generation starts.
+- **Turnaround Sheet Mode** toggle: built (2026-08-31). Runs `--sheet`'s
+  grid-split-and-pick-best directly (`/api/jobs/sheet`, rows/cols/trim
+  fields), decoupled from Auto-detect's VLM classification -- added after
+  a real report of Auto-detect misrouting a turnaround sheet as a design
+  spec sheet (both are multi-view layouts, an easy VLM mix-up), which
+  silently produced however many views the VLM's `/extract` call named
+  (6) instead of the deterministic grid split (4) `--sheet`/Auto-detect's
+  own "sheet" route would have given. Manual mode sidesteps the guess
+  entirely for a caller who already knows it's a turnaround sheet.
+
+  Surfaced two more instances of a bug found the same day in the CLI's
+  own `--sheet`/`--spec-all-views`: any pipeline that generates several
+  candidates before picking a winner calls `run()` with `output_path=None`
+  per candidate (only the winner should land on disk), which meant
+  `run()`'s own GLB-export logic -- gated on `output_path is not None`
+  -- never fired for any of them. `/api/jobs/auto`'s "sheet" route and
+  `_run_spec_sheet` (used by `/api/jobs/spec` too) both had this same gap,
+  independently of the CLI's version and never previously noticed.
+  Fixed once, for all four call sites, via a new shared
+  `pipeline.run.export_winner()` instead of four separate inline copies.
+- **Update (2026-09-01): review-before-generate, built.** Two independent
+  VLM grounding bugs kept surfacing on real sheets even after the size
+  check above: a box landing in the *gap* between two renders (small
+  enough to pass the size check, but clipping through both neighbors --
+  caught by a new `check_box_not_clipping()` in `~/vlm-server/spec_schema.py`,
+  checking pixel content just outside each box edge for non-background
+  content) and, separately, one sheet (`keychain_boba_spec.jpg`) still
+  burning every retry and failing outright (502) even with both checks in
+  place and the repair-retry budget raised from 1 to 2 attempts. Automated
+  prompt/retry tuning had visibly hit diminishing returns on that sheet, so
+  rather than keep chasing it, extraction and generation were split into
+  two job phases with a human checkpoint in between: `/api/jobs/spec` (and
+  Auto-detect routing into spec) now stops right after extraction in a new
+  `awaiting_confirmation` job state, serving every named view's actual crop
+  via `GET /api/jobs/{id}/view/{name}` for the web UI's new review panel to
+  show before `POST /api/jobs/{id}/confirm` resumes the same job into
+  generation -- no re-extraction, reusing exactly what's on disk. Dimension
+  *tweaking* (editing the extracted numbers, not just viewing the crops)
+  is still not built -- reviewing catches a bad crop before it's paid for,
+  but doesn't yet let you correct a bad number without dropping back to
+  the CLI's `--spec` flow.
+
+  **Update (2026-09-02): confirmed the review panel doesn't help when
+  extraction fails outright, only when it succeeds with a bad crop.**
+  `keychain_boba_spec.jpg` still reliably 502s through the web UI --
+  reconfirmed by hand, same failure as above. The review panel has nothing
+  to show in that case (extraction never produced a crop at all), so this
+  sheet was instead fixed the way README.md's "Design spec sheets" section
+  now documents: bypass the VLM entirely, hand-edit `interim/design_spec.json`'s
+  `box_2d` boxes against the sheet's actual pixel dimensions, save matching
+  crops, then `generate --spec` reads them straight off disk. Produced a
+  clean, watertight, single-body result on the first try. Deliberately
+  **not** building a web-UI equivalent (upload-your-own-spec-and-crops) for
+  this -- decided against it as more surface area for a failure mode rare
+  enough that the CLI escape hatch is enough.
 
 ---
 
@@ -366,47 +421,85 @@ the degenerate-volume warning before assuming a fix. Not attempted here.
 Things worth revisiting later, not acted on now -- either too fresh to
 adopt yet, or lower priority than what's actively broken.
 
-### ROCm 10.0
+### ROCm 10.0 -- migrated (2026-08-31), no longer a watch-list item
 
 AMD announced ROCm 10.0 on 2026-08-27 (per
-[Phoronix](https://www.phoronix.com/news/AMD-ROCm-10.0)) -- this box is on
-ROCm 7.13 (a TheRock gfx1151-native nightly, per `hipconfig --version`
-and `docs/SETUP.md`'s documented install path). The version jump is
-largely AMD resetting a confusing 7.x numbering scheme (7.2 stable, 7.9+
-tech preview, 7.14 back to stable) rather than a wholesale technology
-change, and TheRock -- the build system this project already depends on
--- was what underpinned the prior release (7.14) immediately before the
-rename.
+[Phoronix](https://www.phoronix.com/news/AMD-ROCm-10.0)). This box was on
+ROCm 7.13 (a TheRock gfx1151-native nightly) until this migration; kept
+below as the history of how it got resolved.
 
-**Tried and reverted (2026-08-29).** Switched `docs/SETUP.md`'s install
-command to TheRock's newer index
-(`nightly.repo.amd.com/rocm/whl-next/`, `torch[device-gfx1151]` syntax),
-which pulled a real same-day `10.1.0a20260829` build. `torch` itself
-worked fine -- `cuda.is_available()` True, and a same-hardware A/B showed
-the `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` flag this doc requires
-throughout appeared to become unnecessary (flash attention worked
-unflagged, faster than the old build even *with* the flag set: 106ms/call
-unflagged vs. 8.66ms flagged on 7.13, vs. ~4.7ms either way on 10.1). But
-rebuilding `torchmcubes` (TripoSR's marching-cubes extension, compiled
-from source) against the new stack failed inside torch's own
-`LoadHIP.cmake`: `HIP_VERSION_MAJOR`/`MINOR` came back empty from
-TheRock's new split `hip-lang`/`hip` CMake packages, producing `math
-cannot parse the expression: "( * 100) + "`. Real and reproducible, not a
-local misconfig -- also needed `rocm-sdk-devel` + `rocm-sdk init` just to
-get `hip-lang-config.cmake` to exist at all in the first place, a separate
-missing-package issue. Reverted `docs/SETUP.md` and this box's `.venv`
-back to the proven 7.13 build; confirmed working again (`character.png
---backend triposr --size 80 --sheet` -> `PRINTABLE`, full test suite
-green).
+**Tried and reverted (2026-08-29).** TheRock's *nightly* index
+(`nightly.repo.amd.com/rocm/whl-next/`) pulled a same-day `10.1.0a20260829`
+build where `torch` worked but rebuilding `torchmcubes` failed inside
+`LoadHIP.cmake` (`HIP_VERSION_MAJOR`/`MINOR` came back empty from
+TheRock's new split `hip-lang`/`hip` packages). Reverted to 7.13 at the
+time.
 
-Worth re-verifying the whole ROCm/TheRock stack again once gfx1151
-support on the new index has had a few weeks to stabilize -- this was day
-3 of a major packaging change, and the specific bug found (a CMake
-variable-naming mismatch between torch's `LoadHIP.cmake` and TheRock's own
-new split packages) reads like exactly the kind of same-day rough edge
-that gets fixed quickly, not a fundamental incompatibility. The verified
-AOTriton speedup is real motivation to retry -- just not yet on the same
-day it launched.
+**Migrated for real (2026-08-31), via a different, *stable* channel
+(`stable.repo.amd.com/rocm/whl-next/`, `torch[device-gfx1151]` syntax,
+distinct URL from the nightly one above) — this is what
+`docs/SETUP.md` now documents.** Current pin: `torch==2.13.0+rocm10.0.0`.
+`torchmcubes` builds cleanly against it (same `rocm-sdk-devel` +
+`rocm-sdk init` mechanism the nightly attempt needed, now working since
+it's the stable channel, three days further past a version-scheme
+change). Confirmed end to end: full test suite (69 passed), real
+`triposr` generation with `--opt texture=true`, real `hunyuan3d` shape
+generation -- all `PRINTABLE`. Flash/mem-efficient attention now works
+**unflagged**, matching the speedup the nightly attempt measured
+(`TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` no longer required, though
+harmless if still set).
+
+**Bonus, unexpected result: Hunyuan3D texture painting's GPU page-fault
+crash (documented in `docs/SETUP.md`'s Texture painting section) is no
+longer reproducible on this stack.** Two independent full paint-pipeline
+runs against the migrated torch, both clean -- no fault/reset/timeout in
+`journalctl -k`, no desktop stall, real legible PBR texture output. This
+wasn't targeted -- the crash was never root-caused at the kernel level, so
+whether the actual cause was fixed upstream or just isn't triggered by
+this build is unknown.
+
+**Follow-up, same day: `hy3dpaint` wired into `ai.py` for real.**
+`Hunyuan3DBackend` now reads `--opt texture=true` and runs the paint
+pipeline, writing a real PBR-textured preview GLB alongside the STL --
+`GenerationResult` gained a `color_mesh` field for this (Hunyuan3D's
+painted output has a different remeshed topology from the shape mesh, so
+it can't reuse TripoSR's same-object vertex-color path; `run.py`'s
+GLB-export stage now prefers `color_mesh` when a backend sets it).
+Confirmed end to end: `character.png -b hunyuan3d --opt texture=true` ->
+STL + GLB, `PRINTABLE`, real 2048x2048 albedo texture verified by eye.
+Needed two more environment-drift fixes beyond the six already documented
+in `docs/SETUP.md`'s Texture painting section (a `basicsr` import of a
+now-removed private torchvision module, and `pytorch_lightning` needing
+`pkg_resources` which newer `setuptools` no longer bundles) -- both now
+handled in `ai.py` itself or documented as a one-line pin, not requiring
+the manual site-packages edits the original six fixes needed.
+
+**One real regression found and fixed along the way, unrelated to ROCm
+10.0 itself:** rebuilding `torchmcubes` via `uv pip install
+--no-build-isolation-package torchmcubes git+...` without `--no-cache`
+silently reused a `.so` built against the *old* 7.13 torch -- uv's build
+cache for `git+` sources keys on the source commit, not on
+`CMAKE_ARGS`/`ROCM_PATH`. Symptom was a confusing `RuntimeError: vol must
+be a CPU tensor` from a tensor that was genuinely already CPU-side --
+an ABI-mismatch symptom, not an actual bug in torchmcubes' own
+(correct) device check. `docs/SETUP.md` now calls out `--no-cache`
+explicitly wherever this rebuild is documented.
+
+**Second real regression found and fixed, also unrelated to ROCm 10.0:**
+`pymeshlab` was removed on 2026-08-29 (see the "corrupted double-linked
+list" fix commit) on the mistaken conclusion that it was an unrequired
+stray dependency. It is not -- `hy3dshape/postprocessors.py` imports it
+directly for `FaceReducer`/`FloaterRemover`/etc., just not in a way `pip`
+metadata tracks (hy3dshape's `setup.py` declares no dependencies at all).
+Removing it silently broke the `hunyuan3d` backend. Reinstalled it, which
+brought the interpreter-finalization SIGABRT back (100% reproducible,
+not the ~50% seen before) since it can no longer just be uninstalled.
+Real fix this time: `tests/conftest.py` now has a `pytest_unconfigure`
+hook that flushes output and calls `os._exit()` with the real exit
+status once pytest's own reporting is done, skipping the CPython
+finalization step where pymeshlab's bundled Qt runtime crashes. Verified
+the exit code still reflects real failures (a deliberately failing test
+still exits nonzero), not just laundered to 0.
 
 ### `llama-server-rocm` + MTP + vision may be causing real crashes, not just orphaned processes
 

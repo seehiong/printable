@@ -38,7 +38,13 @@ class Job:
     id: str
     backend: str
     dir: Path
-    status: str = "queued"  # queued | running | done | error
+    # queued | running | awaiting_confirmation | done | error.
+    # awaiting_confirmation is spec-sheet-only: extraction finished and the
+    # crops are sitting in `dir` for a human to look at before the
+    # (expensive, VLM-crop-quality-dependent) generation step runs -- see
+    # api/app.py's _extract_spec_views/_generate_from_saved_spec and the
+    # POST /api/jobs/{id}/confirm endpoint that resumes from here.
+    status: str = "queued"
     events: list[dict] = field(default_factory=list)
     subscribers: list[SimpleQueue] = field(default_factory=list)
     result: Any = None  # PipelineResult, once done
@@ -47,6 +53,9 @@ class Job:
     output_path: Path | None = None
     design_spec: dict | None = None  # set once VLM extraction completes (spec-sheet jobs only)
     classification: dict | None = None  # set once /classify responds (auto jobs only)
+    # Generation-phase kwargs stashed at extraction time so /confirm can
+    # resume without the caller having to resend them (spec-sheet jobs only).
+    pending_kwargs: dict | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def on_stage(self, name: str, status: str) -> None:
@@ -59,10 +68,18 @@ class Job:
             q.put(event)
 
     def subscribe(self) -> tuple[list[dict], SimpleQueue | None]:
-        """Returns (events so far, a live queue if the job isn't finished yet)."""
+        """Returns (events so far, a live queue if the job isn't finished yet).
+
+        awaiting_confirmation counts as finished here too: no more events
+        will arrive until a future /confirm call resumes this same job
+        (a fresh _run(), which accepts new subscribers again at that
+        point) -- handing back a live queue now would leave an SSE stream
+        open forever with nothing ever arriving on it, e.g. a page reload
+        while a job is paused for review.
+        """
         with self.lock:
             history = list(self.events)
-            if self.status in ("done", "error"):
+            if self.status in ("done", "error", "awaiting_confirmation"):
                 return history, None
             q: SimpleQueue = SimpleQueue()
             self.subscribers.append(q)
@@ -105,9 +122,12 @@ class JobStore:
         interpreter is still fully alive, than to leave it to whatever
         order interpreter finalization happens to tear things down in.
         (Investigating a real "corrupted double-linked list" crash at the
-        end of this project's own test suite eventually traced it to an
-        unrelated stray dependency, pymeshlab -- see its removal commit --
-        not to this thread specifically. Kept anyway as cheap, real
+        end of this project's own test suite traced it to pymeshlab's
+        bundled Qt runtime crashing during interpreter finalization -- not
+        to this thread specifically, and not a stray dependency either
+        (an earlier pass wrongly concluded that and uninstalled it, which
+        broke hy3dshape's postprocessors.py; see tests/conftest.py's
+        pytest_unconfigure for the actual fix). Kept anyway as cheap, real
         hygiene: it does no harm and rules out one class of teardown race
         outright rather than hoping it doesn't happen to matter.)"""
         self._executor.shutdown(wait=True)
@@ -116,7 +136,13 @@ class JobStore:
         job.status = "running"
         try:
             job.result = fn(*args, **kwargs)
-            job.status = "done"
+            # A function that wants a non-terminal outcome (spec-sheet
+            # extraction pausing for review) sets job.status itself as its
+            # last action before returning; only fall back to "done" if it
+            # didn't touch it, so every existing job function -- which never
+            # sets job.status at all -- keeps working unchanged.
+            if job.status == "running":
+                job.status = "done"
         except Exception as exc:
             log.exception("job %s failed", job.id)
             job.status = "error"

@@ -24,7 +24,19 @@ from printable.types import DepthNormalResult
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "depth-anything/Depth-Anything-V2-Small-hf"
+DEFAULT_MODEL = "Intel/dpt-hybrid-midas"
+# Was depth-anything/Depth-Anything-V2-Small-hf. Its config's model_type
+# ("depth_anything") isn't registered until transformers>=4.49 -- KeyError
+# 'depth_anything' from AutoConfig, confirmed real on transformers==4.35.0
+# (the pin TripoSR/Hunyuan3D need; see docs/SETUP.md), not caught by
+# available()'s plain "is transformers importable" check, so geometry_cues
+# silently produced nothing (no exception surfaced past run()'s own
+# try/except) on any GPU-backend venv on this project. DPT ("dpt" model
+# type) has been in transformers since well before 4.35.0 -- confirmed
+# working standalone against transformers==4.35.0 (this project's actual
+# floor) before switching. Same "depth-estimation" pipeline task, same
+# output shape (a PIL Image at result["depth"]), so estimate_depth_normal()
+# below needed no changes -- this is a pure model swap.
 
 _pipe = None
 

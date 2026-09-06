@@ -135,13 +135,17 @@ uv run --no-sync python -c "import torch; print(torch.cuda.is_available())"
 Then install whichever model you want — TripoSR is the one to try first, since
 it has the fewest exotic dependencies and proves your accelerator stack works.
 
-**On ROCm, `hunyuan3d` generation needs `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` set** —
-without it, generation fails partway through with `error: No available kernel. Aborting execution.`
-(PyTorch's attention dispatcher, not a `printable` bug). Not needed on NVIDIA. Prefix any
-`hunyuan3d` command with it on ROCm:
+**`TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` is no longer needed** as of the
+ROCm 10.0 stable-channel migration (see docs/SETUP.md) — flash attention
+works unflagged on that build. It used to be required for every `hunyuan3d`
+command on ROCm: omitting it failed partway through with `error: No
+available kernel. Aborting execution.` (PyTorch's attention dispatcher, not
+a `printable` bug) on the older TheRock nightly build this project used
+before. Only still needed if you're on that older build for some reason;
+harmless to set either way.
 
 ```bash
-TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 printable generate figure.jpg -b hunyuan3d --size 80
+printable generate figure.jpg -b hunyuan3d --size 80
 ```
 
 **Once a GPU backend is installed, avoid bare `uv sync` and bare `uv run
@@ -204,9 +208,6 @@ if you need the fine detail to survive.
 
 ## Usage
 
-`hunyuan3d` examples below need `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`
-prefixed on ROCm — see "GPU backends" above.
-
 ```bash
 # Lithophane with a border frame
 printable generate assets/examples/portrait.jpg -b lithophane --size 120 \
@@ -221,8 +222,7 @@ printable generate assets/examples/character_male.png -b heightmap --size 90 \
 printable generate assets/examples/character_male.png -b triposr --size 90 \
   --opt texture=true
 
-# True 3D, hollowed to save filament (ROCm: prefix with
-# TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1, see above). --max-faces raised
+# True 3D, hollowed to save filament. --max-faces raised
 # above this backend's raw output size (~400k faces on this example) --
 # decimating down to the 300k default introduced non-manifold edges here,
 # and the repair ladder's Poisson-rebuild escalation didn't recover
@@ -275,7 +275,6 @@ new bottom face) corrects it — use whatever rotation the mesh you're
 looking at actually needs, not a guessed value:
 
 ```bash
-# ROCm: prefix with TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1, see "GPU backends" above
 printable generate your_image.jpg -b hunyuan3d --size 80 --rotate 180 0 0
 ```
 
@@ -290,17 +289,20 @@ printable generate your_image.jpg -b hunyuan3d --size 80 --rotate 180 0 0
 | `steps=N` | hunyuan3d | Diffusion steps; more is slower and finer |
 | `octree_resolution=N` | hunyuan3d | 256 default, 384 for finer detail at more memory |
 | `geometry_cues=true` | any | Writes `<output>_depth.png` / `_normal.png` for inspection. Diagnostic only — see docs/SETUP.md |
-| `texture=true` | triposr | Writes a colored `<output>.glb` preview alongside the STL (cheap per-vertex color; see docs/SETUP.md) |
+| `texture=true` | triposr, hunyuan3d | Writes a colored `<output>.glb` preview alongside the STL (see below) |
 
-STL has no color, so `--opt texture=true` on triposr additionally writes a
-`.glb` next to the STL — a colored preview captured right after generation,
-before repair/print-prep, since decimation, Poisson rebuild, and the
-hollow/base booleans all silently drop color. The `.glb` is for looking at,
-not printing; the `.stl` stays the print target. `printable serve`'s own
-web UI renders it automatically alongside the STL, or drag it into Blender
-or any glTF-aware viewer. hunyuan3d doesn't support `texture=true` yet — it
-would need a separate, much more expensive texture-bake pass; see
-docs/SETUP.md for what that would take.
+STL has no color, so `--opt texture=true` additionally writes a `.glb`
+next to the STL — a colored preview, not the print target (the `.stl`
+stays that). On triposr this is cheap per-vertex color, captured right
+after generation before repair/print-prep strips it (decimation, Poisson
+rebuild, and the hollow/base booleans all silently drop color). On
+hunyuan3d this instead runs `hy3dpaint`, a real PBR texture-painting pass
+— slower (another ~2 min) and a genuinely different, separately remeshed
+mesh from the STL's geometry, not just added color on the same vertices;
+see docs/SETUP.md's Texture painting section for both the history and the
+"different topology" caveat. `printable serve`'s own web UI renders
+whichever GLB was produced automatically alongside the STL, or drag it
+into Blender or any glTF-aware viewer.
 
 ## Design spec sheets
 
@@ -318,7 +320,7 @@ printable generate-spec assets/examples/keychain_boba_spec.jpg
 # 2. Generate -- try every extracted view, keep whichever is actually most
 # printable (--sheet's approach, applied to the spec's own crops); auto-fills
 # --size/--min-wall from the spec, and checks the result's proportions against it
-TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 printable generate \
+printable generate \
   --spec interim/design_spec.json --spec-all-views -b hunyuan3d
 ```
 
@@ -379,28 +381,40 @@ of paying for the full set every time:
 printable generate interim/front.png --spec interim/design_spec.json -b triposr
 ```
 
+**When extraction fails outright, not just badly** (repeated 502s from
+`/extract` — a busy sheet where the VLM can't converge on a valid box
+within its retry budget at all, not just a mis-cropped one), the fix is to
+skip the VLM entirely: hand-edit `interim/design_spec.json`'s `views` with
+your own `box_2d` pixel boxes (crop tight around just the object, checked
+against the sheet's actual pixel dimensions — `PIL.Image.open(path).size`),
+save matching crops as `interim/<name>.png` yourself, then run `generate
+--spec` as above; it never re-calls the VLM once those files exist. This
+is CLI-only — there's no way to feed a hand-made spec through the web UI's
+spec-sheet mode, which always calls `/extract` fresh on upload. Verified
+against a genuinely hard case (`keychain_boba_spec.jpg`'s three-view
+layout, where auto-extraction reliably 502s): manually correcting the
+three `box_2d` boxes and re-running `--spec-all-views` produced a clean,
+watertight, single-body result on the first try.
+
 ## Web API
 
 ```bash
 uv sync --extra api --inexact   # --inexact: see "Once a GPU backend is installed" above
 
-# ROCm: needs TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 prefixed too, same as
-# any hunyuan3d CLI run (see "GPU backends" above) -- unlike the CLI, this is
-# a long-lived server process, so the env var has to be set once here at
-# launch, not per command. Skipping it doesn't fail until the first
-# hunyuan3d job actually runs, with a raw `RuntimeError: No available
-# kernel. Aborting execution.` traceback in the server log and a generic
-# "generation failed" in the UI -- easy to hit without realizing why, since
-# auto-detect (below) routes almost everything except portraits into
-# hunyuan3d first.
-TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 printable serve --host 0.0.0.0 --port 8000
+printable serve --host 0.0.0.0 --port 8000
 ```
 
 Runs the same pipeline behind a small FastAPI server with a browser UI —
 upload a photo from any device on the LAN, watch the pipeline run stage by
 stage (background removal, generation, repair, prep, validate, export) over
-Server-Sent Events, then view and download the resulting STL — or, with the
-"Color (GLB)" option checked, a colored GLB preview instead. Open
+Server-Sent Events, then view and download the result. With the "Color
+(GLB)" option checked and a backend that produced one, an STL/GLB tab
+switcher appears above the mesh stats so you can view and download either
+file — the print-ready STL and the colored preview are both kept, not
+one replacing the other. With "Geometry cues (diagnostic)" checked, the
+`<output>_depth.png`/`_normal.png` maps get their own small section below
+the validation results — a thumbnail (click to download) for whichever
+of the two the backend actually produced. Open
 `http://<this-machine's-lan-ip>:8000/` from another PC once it's running;
 `--host 0.0.0.0` (the default) is what makes it LAN-reachable rather than
 localhost-only.
@@ -420,11 +434,30 @@ picked by hand:
 
 The decision (category, a one-sentence rationale, chosen backend) shows up
 in the progress panel as soon as classification finishes, before generation
-starts — this is what makes `--sheet`'s multi-panel workflow reachable from
-the web UI at all today; there's still no manual sheet-mode toggle here, so
-use the CLI directly if you want to force it rather than let auto-detect
-decide. Same VLM-server requirement and the same multi-view-crop caveat from
-"Design spec sheets" above apply when it routes into the spec pipeline.
+starts. Same VLM-server requirement and the same multi-view-crop caveat
+from "Design spec sheets" above apply when it routes into the spec
+pipeline.
+
+**Spec-sheet jobs pause for review before generating.** Given how
+unreliable multi-view extraction can be (see "Design spec sheets" above),
+both explicit spec mode and auto-detect-into-spec stop right after VLM
+extraction and show every named view crop it actually produced — the same
+crops generation would otherwise start from, several minutes of GPU work
+later. A bad crop (cut off, or catching more than one view on the sheet)
+is obvious at this point, before it's spent; click a thumbnail to open the
+full-size crop, then either "Looks good — generate" to resume the same job
+from those exact crops, or "Start over" to go back and try a different
+photo. There's no re-extraction on confirm — it reuses what's already on
+disk from the first pass.
+
+**Turnaround sheet mode** (a checkbox next to Auto-detect) runs `--sheet`'s
+grid-split-and-pick-best directly, with your own rows/columns/trim and a
+manually picked backend — no VLM call, no classification guess. Use this
+when you already know it's a turnaround sheet: Auto-detect's classification
+is a guess and can mis-route one (most likely as a design spec sheet, since
+both are multi-view layouts), which silently produces a very different
+result — the VLM's own named view count for that image, not a deterministic
+grid split.
 
 Jobs run one at a time — GPU backends share one accelerator and cannot
 generate concurrently — and are tracked in memory only, so a server restart

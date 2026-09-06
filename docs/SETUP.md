@@ -60,7 +60,7 @@ parameter to check, not a bigger BIOS number.
 **→ On `gfx1151` (Strix Halo), Ubuntu 26.04 LTS:**
 
 ```bash
-uv pip install --index-url https://rocm.nightlies.amd.com/v2/gfx1151/ torch torchvision
+uv pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ "torch[device-gfx1151]" torchvision
 ```
 
 Verify:
@@ -82,42 +82,60 @@ The generic multi-arch wheels from `download.pytorch.org` segfault on
 `gfx1151` on any GPU memory access — a real, confirmed upstream bug
 ([ROCm/ROCm#5853](https://github.com/ROCm/ROCm/issues/5853), filed against
 this exact chip). The command above is
-[TheRock](https://github.com/ROCm/TheRock)'s gfx1151-native nightly build,
-which ships its own self-contained ROCm kernels and sidesteps the bug.
+[TheRock](https://github.com/ROCm/TheRock)'s gfx1151-native **stable**
+release channel, which ships its own self-contained ROCm kernels and
+sidesteps the bug.
 
-**This is a nightly index — it changes daily, and this URL may not last.**
-Verified working as of 2026-08-29 — it's actually frozen at build
-`7.13.0a20260513` regardless of when you install (not truly rolling), which
-is fine for now but means it won't self-update either.
+**Migrated to this stable channel and verified working end-to-end
+(2026-08-31)**, replacing the previously-pinned nightly build
+(`rocm.nightlies.amd.com/v2/gfx1151/`, frozen at `7.13.0a20260513`).
+Current stable pin: `torch==2.13.0+rocm10.0.0`. Confirmed via: full test
+suite (69 passed), real `triposr` generation with `--opt texture=true`
+(textured GLB export), and real `hunyuan3d` shape generation — all
+`PRINTABLE`. Flash/mem-efficient attention now works **unflagged** — the
+`TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` flag this doc used to require
+throughout is no longer necessary (kept working if you still set it,
+harmless either way). Most notably: **Hunyuan3D texture painting, long
+documented below as blocked by a real GPU page-fault crash on the old
+7.13 build, now runs clean** — two independent full paint-pipeline runs,
+no GPU fault/reset in the kernel log either time. See that section
+further down for what changed.
 
-**Tried moving to TheRock's newer index, reverted (2026-08-29).**
-`nightly.repo.amd.com/rocm/whl-next/` with `torch[device-gfx1151]` syntax —
-which TheRock's own repo points at as the current replacement — installs
-cleanly and `torch.cuda.is_available()` works. But building any native
-extension from source against it (`torchmcubes`, required for TripoSR)
-fails inside torch's own `LoadHIP.cmake`: `HIP_VERSION_MAJOR`/`MINOR` come
-back empty from TheRock's new split `hip-lang`/`hip` CMake packages,
-producing `math cannot parse the expression: "( * 100) + "`. Real,
-reproducible, upstream — not a local misconfiguration (also needed
-`rocm-sdk-devel` + `rocm-sdk init` just to get `hip-lang-config.cmake` to
-exist at all, a separate missing-package issue from the version-parsing
-one). Consistent with this being a same-day nightly (`10.1.0a20260829`) —
-worth retrying in a few weeks once gfx1151 support on the new index has
-had time to stabilize, not on day 3 of a major version-scheme change. Real
-verified upside if it does end up working: the
-`TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` flag this doc requires
-throughout appeared to become unnecessary on the new build (flash
-attention worked unflagged, and faster than the old build even *with* the
-flag set) — checked via an isolated torch-only smoke test before hitting
-the `torchmcubes` build failure above, so `hunyuan3d`/`triposr` real-model
-behavior was never actually confirmed either way.
+**Tried moving to TheRock's *nightly* index first, reverted (2026-08-29)
+— superseded by the stable-channel migration above, kept here for
+context.** `nightly.repo.amd.com/rocm/whl-next/` with `torch[device-gfx1151]`
+syntax installed cleanly and `torch.cuda.is_available()` worked, but
+building any native extension from source against it (`torchmcubes`,
+required for TripoSR) failed inside torch's own `LoadHIP.cmake`:
+`HIP_VERSION_MAJOR`/`MINOR` came back empty from TheRock's new split
+`hip-lang`/`hip` CMake packages. That was a same-day nightly
+(`10.1.0a20260829`) three days into a major version-scheme change; the
+**stable** channel above (`stable.repo.amd.com`, distinct URL) doesn't
+hit it — `torchmcubes` builds cleanly against it, same `rocm-sdk-devel` +
+`rocm-sdk init` step as below.
 
-If the command above 404s, breaks, or stops resolving, that's expected for
-a nightly build going stale, not a sign something else is wrong. Check
+**If you're rebuilding `torchmcubes`/`custom_rasterizer` after switching
+torch versions in an existing venv, always pass `--no-cache` (or use
+`pip`, not `uv`, which doesn't share this cache) — confirmed real, not
+theoretical.** `uv`'s build cache for `git+`/local-directory native
+extensions is keyed on source (URL + commit), not on `CMAKE_ARGS`/
+`ROCM_PATH`/`PYTORCH_ROCM_ARCH` — so after switching from the old 7.13
+build to this stable channel, `uv pip install --no-build-isolation-package
+torchmcubes git+https://...` silently reused the **old** ABI-incompatible
+`.so` from the previous torch version instead of rebuilding. Symptom was
+bizarre and hard to trace back to caching: `mc.mcubes_cpu()` raised
+`RuntimeError: vol must be a CPU tensor` on a tensor that was
+unambiguously already `.device == cpu` in Python — a corrupted-argument
+symptom from loading a mismatched-ABI compiled extension against the new
+libtorch, not an actual device-check bug in the extension's own source
+(confirmed by reading `torchmcubes`' `macros.h`: the check is a plain,
+correct `x.device() == torch::kCPU`). `--no-cache` forces a genuine
+rebuild and fixes it immediately.
+
+If the command above 404s, breaks, or stops resolving, check
 [TheRock's releases page](https://github.com/ROCm/TheRock/releases) or
 [RELEASES.md](https://github.com/ROCm/TheRock/blob/main/RELEASES.md) for
-the current index, and re-attempt the newer index above once there's
-reason to believe the CMake issue has been fixed upstream.
+the current stable index.
 
 </details>
 
@@ -245,18 +263,36 @@ uv pip install cmake ninja scikit-build-core pybind11
 One requirement, `torchmcubes`, compiles a HIP/CUDA extension from source via
 CMake, which needs `torch` already importable — it also needs
 `--no-build-isolation-package torchmcubes` so the build sees your installed
-torch instead of an isolated one. Run both lines below as one command (the
-`\` continues the line); on AMD's official installer, drop the
-`ROCM_PATH=~/.cache/rocm-shim/root \` line entirely:
+torch instead of an isolated one. On the stable TheRock channel above,
+CMake's `find_package(HIP)` needs `rocm-sdk-devel`'s expanded devel tree
+(one-time per venv — same mechanism this doc's earlier nightly attempt
+needed, now working since it's the stable channel):
+
+```bash
+uv pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ rocm-sdk-devel
+rocm-sdk init   # expands the devel tree; re-run after installing/removing a device wheel
+```
+
+Run both lines below as one command (the `\` continues the line):
 
 ```bash
 SITE_PACKAGES=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
-ROCM_PATH=~/.cache/rocm-shim/root \
+DEVEL_ROOT=$(rocm-sdk path --root)
+ROCM_PATH="$DEVEL_ROOT" \
 PYTORCH_ROCM_ARCH=gfx1151 \
 HSA_OVERRIDE_GFX_VERSION=11.5.1 \
 CMAKE_ARGS="-DCMAKE_PREFIX_PATH=$SITE_PACKAGES -DCMAKE_CXX_FLAGS=-D_GLIBCXX_USE_CXX11_ABI=1" \
-uv pip install --no-build-isolation-package torchmcubes -r requirements.txt
+uv pip install --no-cache --no-build-isolation-package torchmcubes -r requirements.txt
 ```
+
+**Always include `--no-cache` here** — see step 2's callout above on why
+(a stale cached build from a previous torch version is silently
+ABI-incompatible and produces a confusing runtime error, not a build
+failure). If you're on the apt-installed official ROCm 10.0 (`/opt/rocm`,
+step 4 below) instead of this stable TheRock channel, use
+`ROCM_PATH=~/.cache/rocm-shim/root` in place of `$DEVEL_ROOT` — untested
+against this stable torch build specifically, but that's what the
+shim exists for.
 
 `PYTORCH_ROCM_ARCH` is Strix Halo's `gfx1151`; use your own GPU's arch string.
 The `_GLIBCXX_USE_CXX11_ABI=1` flag works around some torch builds leaving
@@ -320,9 +356,11 @@ fidelity, capped by vertex density, not a real UV texture).
 
 ## Hunyuan3D 2.1
 
-**What `ai.py` uses. Shape generation works; texture painting is broken on
-this GPU** (see Texture painting subsection below — shape-only is fine, it's
-what matters for STL output).
+**What `ai.py` uses. Shape generation and texture painting (`--opt
+texture=true`) both work** — texture painting was blocked by a real GPU
+crash on the old ROCm build, fixed by the ROCm 10.0 stable-channel
+migration (see the Texture painting subsection below for the full history;
+shape-only is all that's required for plain STL output).
 
 ```bash
 source /path/to/printable/.venv/bin/activate
@@ -429,7 +467,7 @@ Shape-only smoke test, run from inside the `Hunyuan3D-2.1` checkout
 
 ```bash
 mkdir -p output
-TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 python3 <<'EOF'
+python3 <<'EOF'
 from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
 pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained('tencent/Hunyuan3D-2.1')
 mesh = pipeline(image='assets/demo.png')
@@ -455,20 +493,42 @@ above (the BIOS framebuffer setting itself doesn't bound this).
 confirmed working end-to-end through `printable`'s own CLI — that's the
 actual goal, and it's what `ai.py` uses for every `hunyuan3d` generation.
 
-Everything below is either optional (Depth/normal geometry cues) or a
-documented dead end (texture painting doesn't work on this GPU, kept only
-for reference). Stop here, or skip to whichever of those you actually want.
+Everything below is optional: Depth/normal geometry cues, or texture
+painting — the latter **now works and is wired into `ai.py`**
+(`--opt texture=true`; fixed by the ROCm 10.0 stable-channel migration
+above, see the details block for the full history) — but nothing past
+this point is required just to reproduce today's `hunyuan3d` shape-only
+generation.
 
 ---
 
 <details>
-<summary>Texture painting: blocked by a real GPU crash, not a config issue (not needed for setup)</summary>
+<summary>Texture painting: was blocked by a real GPU crash, fixed by the ROCm 10.0 migration (not needed for setup)</summary>
 
-Everything below was chased down and fixed, and texture painting still
-doesn't work here — the remaining blocker is a genuine bug, not something
-`printable` can configure around. Documented in full because the individual
-fixes are still correct and may matter again (e.g. if upstream patches the
-actual blocker and painting becomes viable).
+**Update (2026-08-31): fixed.** Everything in this section originally
+documented a genuine, reproducible-3x GPU page-fault crash on the old
+7.13 nightly build. After migrating to the stable TheRock channel (step 2
+above, `torch==2.13.0+rocm10.0.0`), two independent full paint-pipeline
+runs (rebuilding `custom_rasterizer` + `DifferentiableRenderer` against
+the new torch, then running the actual paint pipeline end to end)
+completed cleanly — no GPU fault/reset/timeout in the kernel log either
+time (`journalctl -k -f`, watched live), no desktop stall, real legible
+PBR texture output (albedo + metallic + roughness) verified by eye. This
+wasn't a targeted fix for the crash specifically — it was never
+root-caused at the kernel/driver level, just no longer reproducible after
+the stack migration that was undertaken for unrelated reasons (torchmcubes'
+build being broken on the nightly channel). If it regresses on some future
+ROCm/torch update, the six numbered fixes below are all still independently
+correct and worth reapplying; only the final "GPU crashes" outcome at the
+end of this section is now stale. `ai.py` has since wired texture painting
+into `printable`'s own pipeline too (`--opt texture=true`, fixes #7-#8
+further down plus the "Current state: wired up" note at the end of this
+section) — everything below started as a standalone reproduction against
+the `Hunyuan3D-2.1` checkout directly, before that wiring existed.
+
+Everything below was chased down and fixed, and texture painting does work
+here now — kept in full because the individual fixes are still correct
+and worth knowing if a future ROCm/torch update regresses any of them.
 
 Two native-extension builds, both new relative to 2.0's single
 `custom_rasterizer`:
@@ -485,10 +545,12 @@ cd ../..
 **Both need the same runtime fix to actually import**: `ImportError:
 libc10.so`/`librocm-openblas.so.0: cannot open shared object file`. TheRock's
 ROCm SDK ships scattered across several nested `site-packages`
-subdirectories, none on the default library search path:
+subdirectories, none on the default library search path (path below is for
+the stable channel's package layout — `_rocm_sdk_libraries`, no `_gfx1151`
+suffix; the old nightly build used `_rocm_sdk_libraries_gfx1151` instead):
 
 ```bash
-export LD_LIBRARY_PATH="$VIRTUAL_ENV/lib/python3.12/site-packages/torch/lib:$VIRTUAL_ENV/lib/python3.12/site-packages/_rocm_sdk_core/lib:$VIRTUAL_ENV/lib/python3.12/site-packages/_rocm_sdk_core/lib/host-math/lib:$VIRTUAL_ENV/lib/python3.12/site-packages/_rocm_sdk_core/lib/rocm_sysdeps/lib:$VIRTUAL_ENV/lib/python3.12/site-packages/_rocm_sdk_core/lib/llvm/lib:$VIRTUAL_ENV/lib/python3.12/site-packages/_rocm_sdk_libraries_gfx1151/lib"
+export LD_LIBRARY_PATH="$VIRTUAL_ENV/lib/python3.12/site-packages/torch/lib:$VIRTUAL_ENV/lib/python3.12/site-packages/_rocm_sdk_core/lib:$VIRTUAL_ENV/lib/python3.12/site-packages/_rocm_sdk_core/lib/host-math/lib:$VIRTUAL_ENV/lib/python3.12/site-packages/_rocm_sdk_core/lib/rocm_sysdeps/lib:$VIRTUAL_ENV/lib/python3.12/site-packages/_rocm_sdk_core/lib/llvm/lib:$VIRTUAL_ENV/lib/python3.12/site-packages/_rocm_sdk_libraries/lib"
 ```
 
 **`compile_mesh_painter.sh` can build against the wrong Python** if your
@@ -585,33 +647,82 @@ chain of real, fixable bugs, in the order they surface:
    # -> courent.simplify_quadric_decimation(face_count=target_count)
    ```
 
-**After all six fixes, the pipeline gets past every Python-level bug and
-crashes the GPU itself.** A real `[gfxhub] page fault` inside
-`custom_rasterizer`'s hipified kernels, confirmed reproducible three times in
-a row: `dmesg`/`journalctl -k` shows `amdgpu 0000:c6:00.0: ring gfx_0.0.0
-timeout` followed by a forced ring reset, right as rendering setup begins
-(before diffusion sampling even starts — reducing `max_num_view` doesn't
-help, since the crash isn't in the diffusion step). The GPU driver
-self-recovers each time (`Ring gfx_0.0.0 reset succeeded... device wedged,
-but recovered through reset` — no reboot needed, `uptime` stays continuous),
-but because this is an integrated APU, the reset briefly stalls **every**
-GPU client sharing the chip, including the desktop compositor
-(`gnome-shell`) and VS Code's own GPU process — visible as the whole desktop
-session appearing to lock up or restart.
+**After all six fixes, on the old 7.13 nightly build, the pipeline got past
+every Python-level bug and crashed the GPU itself.** A real `[gfxhub] page
+fault` inside `custom_rasterizer`'s hipified kernels, confirmed reproducible
+three times in a row on that build: `dmesg`/`journalctl -k` showed `amdgpu
+0000:c6:00.0: ring gfx_0.0.0 timeout` followed by a forced ring reset, right
+as rendering setup began (before diffusion sampling even started —
+reducing `max_num_view` didn't help, since the crash wasn't in the
+diffusion step). The GPU driver self-recovered each time (`Ring gfx_0.0.0
+reset succeeded... device wedged, but recovered through reset` — no reboot
+needed, `uptime` stayed continuous), but because this is an integrated APU,
+the reset briefly stalled **every** GPU client sharing the chip, including
+the desktop compositor (`gnome-shell`) and VS Code's own GPU process —
+visible as the whole desktop session appearing to lock up or restart.
 
-This is a real, unported CUDA-specific assumption in `custom_rasterizer`'s
-kernels faulting on ROCm's memory model, not a timeout/contention issue —
-`MeshRender.py` has no CPU or alternate-GPU rasterizer fallback (`raster_mode
-= "cr"` is the only implemented mode; every other branch just raises). Not
-something `printable` can configure around. Options if revisiting this:
-read the actual CUDA kernel source in `custom_rasterizer` for the specific
-pointer/memory-layout assumption that doesn't hold on ROCm, watch for an
-upstream fix, or try a different ROCm/kernel driver version.
+**No longer reproducible after migrating to the ROCm 10.0 stable channel
+(2026-08-31)** — see the update note at the top of this section. Rebuilt
+both extensions against the new torch, reapplied all six fixes above
+(still all correct and still all needed), ran the paint pipeline twice:
+clean both times, no fault/reset/timeout anywhere in `journalctl -k`, real
+legible PBR output. Whether the underlying kernel-level cause was actually
+fixed upstream (ROCm driver, torch's HIP runtime) or just no longer
+triggered by this specific build is unknown — it was never root-caused at
+the kernel/pointer level to begin with, only confirmed-crashing and now
+confirmed-not-crashing. If it resurfaces on a future ROCm/torch update,
+treat the description above as the reference reproduction, not evidence
+it's unfixable — options if it does return: read the actual CUDA kernel
+source in `custom_rasterizer` for the specific pointer/memory-layout
+assumption that might not hold on ROCm, or pin back to a known-working
+build.
 
-**Current state: shape generation only.** `printable`'s `hunyuan3d` backend
-uses 2.1 for shape generation (proven working, see status callout above).
-Texture-derived color on the exported GLB currently only comes from
-TripoSR's vertex-color path (`--opt texture=true`), not from Hunyuan3D.
+**Current state: wired up (2026-08-31).** `printable`'s `hunyuan3d` backend
+now reads `--opt texture=true` for real: `Hunyuan3DBackend._paint()` in
+`src/printable/backends/ai.py` runs `hy3dpaint` on the shape mesh and
+writes a genuine PBR-textured preview GLB alongside the STL (the STL
+itself is always the plain shape mesh -- STL has no texture slot to put
+this in regardless of backend). Confirmed end to end: `printable generate
+assets/examples/character.png -b hunyuan3d --size 80 --opt texture=true`
+produces `output.stl` + `output.glb`, `PRINTABLE`, real 2048x2048 albedo
+texture verified by eye (metallic/roughness maps don't survive trimesh's
+OBJ-material-to-GLB conversion -- a cosmetic loss, not a functional one).
+
+Two more real, one-line fixes needed to get here, on top of the six
+above -- both are environment-drift issues (a package that changed
+shape since this doc's fixes above were written), not new bugs in
+`hy3dpaint` itself, and both are now handled in `ai.py`'s own code
+(`_shim_basicsr_functional_tensor()`, `_ensure_rocm_sdk_ld_library_path()`)
+rather than requiring a manual site-packages edit, except where noted:
+
+7. **`ModuleNotFoundError: No module named 'torchvision.transforms.
+   functional_tensor'`** (same root cause as fix #3 above, hit again
+   because that fix patched a throwaway venv's site-packages copy of
+   `basicsr`, not this checkout's actual production `.venv`) -- now
+   handled at import time by `_shim_basicsr_functional_tensor()`, so a
+   fresh venv doesn't need the manual patch fix #3 describes.
+8. **`ModuleNotFoundError: No module named 'pkg_resources'`** -- newer
+   `setuptools` (84.0.0 seen here) no longer bundles `pkg_resources`,
+   which `pytorch_lightning`'s `lightning_fabric` still hard-imports.
+   Unlike fix #7, this one isn't shimmable in-process (it's a real
+   removed stdlib-adjacent module other packages import directly, not a
+   private API `printable` can substitute a lightweight replacement for)
+   -- pin an older `setuptools` that still includes it:
+   ```bash
+   uv pip install "setuptools==80.9.0"
+   ```
+   Triggers a `pkg_resources is deprecated` `UserWarning` on import,
+   harmless. Not in `pyproject.toml` (setuptools isn't a direct
+   `printable` dependency, just a transitive one some AI-backend package
+   needs) -- same "outside the lockfile, reinstall after `uv sync`"
+   category as everything else in this doc.
+
+`Hunyuan3DBackend._paint()`'s topology note, if extending this further:
+the painted mesh is *not* the same object as the shape mesh used for the
+STL -- `hy3dpaint` remeshes and UV-unwraps internally (`GenerationResult.
+color_mesh`, distinct from `GenerationResult.mesh`), so don't assume
+vertex/face correspondence between the STL and the GLB preview the way
+you safely can for TripoSR's `--opt texture=true` path.
 
 </details>
 
@@ -621,58 +732,51 @@ TripoSR's vertex-color path (`--opt texture=true`), not from Hunyuan3D.
 hints alongside generation), not something `printable generate` needs to
 work. Skip this whole section unless you specifically want it.
 
-**Breaks TripoSR if you enable it — confirmed here, not just in theory.**
-`pyproject.toml`'s `depth` extra needs `transformers>=4.49`; TripoSR needs
-exactly `transformers==4.35.0`. These cannot coexist in the same venv,
-under any sync flag — `--inexact` only stops *removal* of packages outside
-the lockfile (torch/torchmcubes/hy3dshape correctly survive), it does
-**not** protect the *version* of lockfile-tracked packages like
-`transformers` from being bumped to satisfy a real declared constraint.
-`uv sync --extra depth` (even `--inexact`) will bump `transformers` to
-5.x and `huggingface-hub` to 1.x, which then breaks TripoSR outright.
-
-**It also rewrites `uv.lock` itself**, not just the venv — confirmed here.
-If you run this, check `git diff uv.lock` afterward and revert it
-(`git checkout -- uv.lock`) before committing anything, unless you actually
-intend to change what `printable`'s base resolution locks to for everyone
-who pulls this repo:
+**Works alongside TripoSR/Hunyuan3D as of 2026-09-01 — no separate install,
+no version conflict.** `backends/depth.py`'s `DEFAULT_MODEL` is
+`Intel/dpt-hybrid-midas` (DPT), not `depth-anything/Depth-Anything-V2-
+Small-hf` as it used to be. Depth-Anything's config needs
+`transformers>=4.49`; DPT has been registered since well before this
+project's actual floor, `transformers==4.35.0` (TripoSR/Hunyuan3D's own
+pin) — confirmed working directly against that exact installed version
+before switching. If you already have TripoSR or Hunyuan3D installed per
+this doc, `transformers` is already present and this just works:
 
 ```bash
-cd /path/to/printable   # back to the printable checkout, not a backend clone
-uv sync --extra depth --inexact
-```
-
-**To switch back to TripoSR/Hunyuan3D afterward** (run from anywhere, venv
-active — `uv pip install`, unlike `uv sync` above, doesn't care about cwd).
-**Two separate commands, not one** — `tokenizers==0.14.1` (pulled in by
-`transformers==4.35.0`) declares its own `huggingface-hub<0.18` bound, so a
-joint resolve of both together fails outright on that conflict, the same
-trap as everywhere else in this doc:
-
-```bash
-uv pip install transformers==4.35.0
-uv pip install huggingface-hub==0.36.2
-```
-
-```bash
-TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 printable generate assets/examples/character.png --backend hunyuan3d --size 100 \
+printable generate assets/examples/character.png --backend hunyuan3d --size 100 \
   --opt geometry_cues=true
 ```
-
-The env var is the same one required for the shape-only smoke test earlier
-— still required here, `printable` doesn't set it for you.
 
 Writes `<output>_depth.png` and `<output>_normal.png` alongside the STL for
 inspection. Diagnostic only today — no backend accepts either map as a
 conditioning input yet, so this doesn't change the generated mesh. The
 normal map is derived from the depth map's gradients, not a learned
 estimate: `transformers` has no `normal-estimation` pipeline task to call.
+`printable serve`'s web UI has its own "Geometry cues (diagnostic)"
+checkbox for this same option, with thumbnails + download links for
+whichever of the two maps a job actually produced — see README.md's Web
+API section.
 
-If TripoSR/Hunyuan3D's `transformers==4.35.0` is active (the normal state,
-per the switch-back command above), this stage fails with `KeyError:
-'depth_anything'` and no PNGs get written — expected, not a bug. The stage
-logs a warning and generation continues without it; see the conflict
-explained above.
+<details>
+<summary>If you're on a CPU-only setup (no TripoSR/Hunyuan3D), `transformers` isn't installed yet</summary>
+
+`heightmap`/`lithophane` don't pull in `transformers` themselves (this
+diagnostic is the only thing that needs it on a CPU-only install) — get it
+via the `depth` extra:
+
+```bash
+uv sync --extra depth --inexact
+```
+
+No version conflict to worry about here either way — `pyproject.toml`'s
+`depth` extra declares plain `transformers`, no floor, precisely because
+DPT doesn't need one. (Historical note: this extra used to pin
+`transformers>=4.49` for the old Depth-Anything default, which is
+what made it genuinely incompatible with TripoSR/Hunyuan3D's
+`transformers==4.35.0` in the same venv — not true anymore, kept here
+only so an old bug report referencing it still makes sense.)
+
+</details>
 
 ---
 
@@ -754,7 +858,7 @@ using whatever direction you actually observe (not a guessed `180 0 0`):
 
 ```bash
 # 1. look first, no --rotate -- --sheet: see all four raw candidates
-TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 printable generate assets/examples/character.png \
+printable generate assets/examples/character.png \
   -b hunyuan3d --size 100 --sheet --keep-all
 ```
 
@@ -767,6 +871,6 @@ by guessing):
 
 ```bash
 printable split assets/examples/character.png -d output/panels/
-TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 printable generate output/panels/character_v0.png \
+printable generate output/panels/character_v0.png \
   -b hunyuan3d --size 100 --rotate <X> <Y> <Z>
 ```
