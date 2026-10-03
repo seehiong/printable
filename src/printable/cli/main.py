@@ -49,7 +49,10 @@ def _print_generate_result(result) -> None:
     stages = "  ".join(f"{k} {v:.1f}s" for k, v in result.timings.items())
     print(f"  {stages}   (total {total:.1f}s)")
     print()
-    print("  PRINTABLE" if result.report.printable else "  NOT PRINTABLE - see errors above")
+    if result.metadata.get("game_asset"):
+        print("  GAME ASSET - textured low-poly, not print-checked")
+    else:
+        print("  PRINTABLE" if result.report.printable else "  NOT PRINTABLE - see errors above")
 
 
 def _settings_from_args(args: argparse.Namespace) -> PrintSettings:
@@ -98,6 +101,13 @@ def cmd_generate(args: argparse.Namespace) -> int:
     if args.min_wall is None:
         args.min_wall = 0.8
 
+    if args.game_asset and (args.sheet or args.spec_all_views):
+        print("error: --game-asset doesn't support --sheet/--spec-all-views yet", file=sys.stderr)
+        return 1
+    if args.art_source and not args.game_asset:
+        print("error: --art-source only applies with --game-asset", file=sys.stderr)
+        return 1
+
     if args.spec_all_views:
         return _cmd_generate_spec_views(args, spec)
 
@@ -109,20 +119,43 @@ def cmd_generate(args: argparse.Namespace) -> int:
         return _cmd_generate_sheet(args)
 
     settings = _settings_from_args(args)
-    out = args.output or Path("output") / f"{Path(args.image).stem}_{args.backend}.stl"
+    ext = "glb" if args.game_asset else "stl"
+    out = args.output or Path("output") / f"{Path(args.image).stem}_{args.backend}.{ext}"
 
+    options = _parse_options(args.opt)
     result = run(
         Path(args.image),
         backend=args.backend,
         settings=settings,
-        options=_parse_options(args.opt),
+        options=options,
         output_path=Path(out),
         seed=args.seed,
         skip_repair=args.skip_repair,
         max_faces=args.max_faces,
+        game_asset=args.game_asset,
+        game_asset_max_faces=args.game_asset_max_faces,
+        game_asset_texture_size=args.game_asset_texture_size,
     )
 
-    if spec:
+    if args.art_source:
+        from printable.art_source import read_image_params, write_for_result
+
+        written = write_for_result(
+            Path(args.art_source),
+            result,
+            image_path=Path(args.image),
+            image_params=read_image_params(Path(args.image)),
+            backend=args.backend,
+            seed=args.seed,
+            options=options,
+            max_faces=args.game_asset_max_faces,
+            texture_px=args.game_asset_texture_size,
+            model_name=Path(out).with_suffix(".glb").name,
+        )
+        for path in written:
+            print(f"  wrote {path}")
+
+    if spec and not args.game_asset:
         from printable.pipeline.validate import check_dimension_targets
 
         dims = spec.get("dimensions_mm", {})
@@ -343,6 +376,65 @@ def cmd_generate_spec(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_generate_image(args: argparse.Namespace) -> int:
+    """Text description -> PNG via a running ComfyUI server.
+
+    A separate step, same shape as generate-spec: produces an image on
+    disk, no 3D generation. Feed the result into `printable generate
+    <output> ...` same as any other photo -- a plain product-photo-style
+    prompt (single object, flat background) is exactly the profile the
+    pipeline wants.
+    """
+    from printable.comfyui_client import generate_image
+
+    out = Path(args.output or Path("output") / "generated.png")
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    print()
+    print(f"  generating via {args.comfyui_url} ...")
+    image = generate_image(
+        args.prompt,
+        negative_prompt=args.negative_prompt,
+        steps=args.steps,
+        cfg=args.cfg,
+        width=args.width,
+        height=args.height,
+        seed=args.seed,
+        checkpoint=args.checkpoint,
+        comfyui_url=args.comfyui_url,
+    )
+    out.write_bytes(image.png)
+    print(f"  wrote {out}  (seed {image.params['seed']}, settings embedded in the PNG)")
+    print()
+    print(f"  printable generate {out} -b hunyuan3d --game-asset \\")
+    print("      --art-source art_source/<name> -o <name>.glb")
+    print()
+    return 0
+
+
+def cmd_bake(args: argparse.Namespace) -> int:
+    """Re-reduce a kept raw.glb to a textured game model, no regeneration."""
+    import trimesh
+
+    from printable.pipeline.bake import export_glb, make_game_asset
+
+    source = trimesh.load(args.raw, force="mesh")
+    options = _parse_options(args.opt)
+    asset = make_game_asset(
+        source,
+        max_faces=args.max_faces,
+        texture_size=args.texture_size,
+        axis_scale=tuple(float(options.get(f"scale_{a}", 1.0)) for a in "xyz"),
+    )
+    export_glb(asset, Path(args.output))
+    print()
+    print(f"  wrote {args.output}")
+    print(f"  faces {len(asset.faces):,} (from {len(source.faces):,}), "
+          f"texture {args.texture_size}px, watertight {asset.watertight}")
+    print()
+    return 0
+
+
 def cmd_split(args: argparse.Namespace) -> int:
     """Cut a multi-view sheet into single-subject panels."""
     from printable.backends.sheet import pick_best_panel, split_sheet
@@ -460,6 +552,20 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--skip-repair", action="store_true",
                    help="export raw generator output, for debugging")
     g.add_argument("--max-faces", type=int, default=300_000)
+    g.add_argument("--game-asset", action="store_true",
+                   help="output a textured low-poly .glb for game/engine use instead "
+                        "of a printable STL: color and surface detail baked into a "
+                        "base-color texture and normal map, no scale-to-mm/base/hollow. "
+                        "triposr/hunyuan3d only (forces --opt texture=true); not yet "
+                        "compatible with --sheet/--spec-all-views")
+    g.add_argument("--game-asset-max-faces", type=int, default=3_500,
+                   help="--game-asset: triangle budget (default 3500)")
+    g.add_argument("--game-asset-texture-size", type=int, default=1024,
+                   help="--game-asset: baked texture size in pixels (default 1024)")
+    g.add_argument("--art-source", metavar="DIR",
+                   help="--game-asset: also write DIR/reference.png, DIR/raw.glb (the "
+                        "untouched high-poly output, to re-bake from later) and "
+                        "DIR/prompt.md (prompt, seed and settings)")
     g.add_argument("--opt", action="append", default=[], metavar="KEY=VALUE",
                    help="backend-specific option, repeatable. Common: "
                         "key_background=true (cut a flat backdrop away), "
@@ -488,6 +594,37 @@ def build_parser() -> argparse.ArgumentParser:
     gs.add_argument("--interim-dir", default="interim",
                      help="where design_spec.json and cropped views are written")
     gs.set_defaults(func=cmd_generate_spec)
+
+    gi = sub.add_parser(
+        "generate-image",
+        help="text description -> PNG via a local ComfyUI server",
+    )
+    gi.add_argument("prompt", help="image description")
+    gi.add_argument("-o", "--output", help="output PNG path (default output/generated.png)")
+    gi.add_argument("--negative-prompt", default="text, watermark, blurry, low quality, deformed")
+    gi.add_argument("--steps", type=int, default=4)
+    gi.add_argument("--cfg", type=float, default=1.0)
+    gi.add_argument("--width", type=int, default=1024)
+    gi.add_argument("--height", type=int, default=1024)
+    gi.add_argument("--seed", type=int, default=None, help="omit for a random seed each run")
+    gi.add_argument("--checkpoint", default="sd_xl_turbo_1.0_fp16.safetensors",
+                     help="SDXL-family checkpoint filename installed in ComfyUI")
+    gi.add_argument("--comfyui-url", default="http://localhost:8188")
+    gi.set_defaults(func=cmd_generate_image)
+
+    bk = sub.add_parser(
+        "bake",
+        help="raw high-poly .glb -> textured low-poly game .glb, no regeneration",
+    )
+    bk.add_argument("raw", help="a colored high-poly mesh, e.g. an art source's raw.glb")
+    bk.add_argument("-o", "--output", required=True, help="output .glb path")
+    bk.add_argument("--max-faces", type=int, default=3_500,
+                    help="triangle budget (default 3500)")
+    bk.add_argument("--texture-size", type=int, default=1024,
+                    help="baked texture size in pixels (default 1024)")
+    bk.add_argument("--opt", action="append", default=[], metavar="KEY=VALUE",
+                    help="scale_x/scale_y/scale_z=FACTOR to squash an axis (default 1.0)")
+    bk.set_defaults(func=cmd_bake)
 
     s_ = sub.add_parser("split", help="cut a multi-view sheet into panels")
     s_.add_argument("image", help="turnaround or reference sheet")

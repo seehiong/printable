@@ -11,6 +11,8 @@
   <a href="#quick-start">Quick start</a> ·
   <a href="#setup">Setup</a> ·
   <a href="#backends">Backends</a> ·
+  <a href="#game-assets">Game assets</a> ·
+  <a href="#text-to-image">Text to image</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="docs/SETUP.md">GPU setup</a>
 </p>
@@ -88,7 +90,7 @@ generation time.
 ### Optional extras
 
 ```bash
-uv sync --extra repair --extra preprocess   # or --all-extras for both
+uv sync --extra repair --extra preprocess --inexact   # or --all-extras for both
 ```
 
 `pytest` and `ruff` are in the `dev` dependency group, which `uv sync` installs
@@ -152,14 +154,15 @@ printable generate figure.jpg -b hunyuan3d --size 80
 <anything>`** (`uv run pytest`, `uv run ruff check`, all of them) — both
 reconcile the venv to match `printable`'s own lockfile by default, which
 silently *removes* torch and everything installed on top of it, since none
-of that is in the lockfile. To run a command, use `uv run --no-sync
-<command>`, or just call the activated venv's binaries directly with no
-`uv run` prefix at all. To add a new extra (e.g. `--extra api`), use `uv
-sync --extra X --inexact` — `--inexact` stops removal of packages outside
-the lockfile, though it does *not* protect the *version* of already
-lockfile-tracked packages if the new extra needs a newer one (rare; none of
-this project's extras do today). See [docs/SETUP.md](docs/SETUP.md) for the
-full explanation and recovery steps if you get bitten by this.
+of that is in the lockfile. [docs/SETUP.md](docs/SETUP.md)'s Base install
+section has a shell function that makes this impossible to forget (redefines
+`uv sync`/`uv run` to always pass `--inexact`/`--no-sync`) — add it before
+installing a GPU backend and this stops being something to remember at all.
+Without it: use `uv run --no-sync <command>`, or just call the activated
+venv's binaries directly with no `uv run` prefix. To add a new extra (e.g.
+`--extra api`) either way, use `uv sync --extra X --inexact` — `--inexact`
+does *not* protect the *version* of already lockfile-tracked packages if the
+new extra needs a newer one (rare; none of this project's extras do today).
 
 ### VRAM guide
 
@@ -304,6 +307,162 @@ see docs/SETUP.md's Texture painting section for both the history and the
 whichever GLB was produced automatically alongside the STL, or drag it
 into Blender or any glTF-aware viewer.
 
+## Game assets
+
+```bash
+printable generate reference.png -b hunyuan3d --game-asset \
+  --game-asset-max-faces 12000 \
+  --art-source art_source/relics/relic_astrolabe \
+  -o assets/models/relics/relic_astrolabe.glb
+```
+
+`--game-asset` makes one `.glb` for a game engine instead of a printable
+STL. The backend's colored output is reduced to `--game-asset-max-faces`
+triangles (default 3,500) and its color and surface detail are baked onto
+the result as a base-color texture and a normal map
+(`--game-asset-texture-size`, default 1024 px). There's no scale-to-mm, no
+base or hollow, and nothing fails the job over watertightness. triposr or
+hunyuan3d only (it forces `--opt texture=true`); not yet compatible with
+`--sheet`/`--spec-all-views`. Baking needs `xatlas`: Hunyuan3D's hy3dpaint
+already installs it, otherwise `uv sync --extra bake --inexact`.
+
+**Keep the art source.** `--art-source DIR` also writes:
+
+| File | Use |
+|---|---|
+| `reference.png` | The image fed to image-to-3D. If it came from `generate-image`, its prompt and seed are embedded in it. |
+| `raw.glb` | The backend's untouched high-poly output: the bake source. |
+| `prompt.md` | Prompt, negative prompt, seeds and every setting, plus the command to re-bake. |
+
+`raw.glb` is what you re-reduce from at another budget, with no
+regeneration:
+
+```bash
+printable bake art_source/relics/relic_astrolabe/raw.glb \
+  -o assets/models/relics/relic_astrolabe.glb --max-faces 8000
+```
+
+The art source is CLI-only. In the web UI a game-asset job offers
+**Download game model (.glb)** and **Download reference image**, and the
+text-to-image panel shows each image's seed (enter it under Advanced to
+reproduce the image).
+The browser preview shows the base-color texture only; the normal map
+shows up in the engine.
+
+**Squash a wrong depth.** A single-image backend guesses the depth it
+never saw, and nothing here rescales a game asset, so a jewel or a disk
+can come out fat. `--opt scale_x=`/`scale_y=`/`scale_z=` (default `1.0`)
+squash an axis around the mesh's centroid, e.g. `--opt scale_z=0.4`.
+Which axis is "depth" varies by backend and even by generation, so it's
+trial and error, like `--rotate` on the print path. The web UI has the
+same three fields once "Game asset" is checked, and `bake` accepts them
+too.
+
+<details>
+<summary>Why bake instead of vertex color, and what else happens</summary>
+
+Per-vertex color can't survive a reduction to a game budget. At 3,500
+triangles about 1,750 vertices are left to carry all the paint, so detail
+smears into blobs. The baker (`pipeline/bake.py`) keeps the paint in an
+image instead. It reduces the geometry, UV-unwraps the result with xatlas,
+then for every texel finds the closest point on the untouched high-poly
+and copies that point's color into the base-color texture and its surface
+normal into a tangent-space normal map. It works from either kind of
+backend output: hy3dpaint's UV texture or TripoSR's vertex color.
+Candidates on the far side of a thin surface (the back of a disk) are
+ruled out, so the two sides don't bleed into each other.
+
+The GLB is written directly rather than through trimesh, so that it
+carries the TANGENT attribute the normal map was baked against, and an
+explicit `metallicFactor` of 0. glTF's default is 1.0, which engines
+render as dark polished metal.
+
+Holes are still closed. A single-image reconstruction is routinely not
+watertight, and a hole shows as a black gap in the engine. Island removal
+and hole filling run before and after decimation, since a quadric pass
+can reopen a closed mesh. Poisson rebuild doesn't run: it resamples the
+whole surface and loses the sharp edges the normal map is meant to keep.
+The job's `watertight` stat says whether it worked; `False` means a hole
+was too large or irregular for hole filling.
+
+</details>
+
+## Text to image
+
+No photo? Generate the input image itself from a description, via a
+[ComfyUI](https://github.com/comfyanonymous/ComfyUI) server running
+separately:
+
+```bash
+uv sync --extra comfyui --inexact   # --inexact: see "Once a GPU backend is installed" above
+
+printable generate-image "ancient Chinese jade bi disk, circular ceremonial \
+flat jadeite ring with central hole, coiled dragon relief, isolated on pure \
+white background, even lighting, no reflections" \
+  --negative-prompt "cropped, cut off, multiple objects, floor, shadow, text" \
+  -o interim/jade_bi_disk.png            # prints the seed; also embedded in the PNG
+
+printable generate interim/jade_bi_disk.png -b hunyuan3d \
+  --game-asset --game-asset-max-faces 3000 \
+  --art-source art_source/relics/relic_bi_disk -o relic_bi_disk.glb
+```
+
+Two separate steps, same shape as `generate-spec`: the first calls out to
+ComfyUI and writes a PNG, nothing 3D; the second is the ordinary `generate`
+command from here on, `--game-asset` or otherwise. `printable serve`'s web
+UI has the same thing as a "Text to image" panel above the photo drop
+zone — type a description, "Generate image", then either download the PNG
+or click "Use this image" to send it straight into the normal generate form
+below, unchanged.
+
+The web UI's panel also has a "Force left-right symmetry" checkbox, CLI-
+only otherwise: for a symmetric real object (a censer, a disk, anything
+with matching handles) the model routinely draws the two sides
+differently, which a single-image 3D backend then has no way to
+reconcile. Checking it replaces the right half of the generated image
+with a horizontally-flipped copy of the left half, client-side, right
+after generation — a real loss of whatever was originally on the right
+(the left half is picked arbitrarily as the "true" one), but a plain
+fix for the more common problem of a lopsided reconstruction.
+
+<details>
+<summary>Setup and defaults</summary>
+
+Needs ComfyUI installed and running separately -- not something this
+project vendors, starts, or manages:
+
+```bash
+# One-time: clone ComfyUI and set up its own venv per its own README --
+# https://github.com/comfyanonymous/ComfyUI
+cd /path/to/ComfyUI
+source .venv/bin/activate
+python main.py --listen 127.0.0.1 --port 8188   # foreground, leave it running
+```
+
+`--comfyui-url` (CLI) / the "ComfyUI server URL" field (web UI) defaults to
+`http://localhost:8188`, matching ComfyUI's own default port -- point it
+elsewhere if ComfyUI is running on a different host/port. "could not reach
+ComfyUI" means this step hasn't been done yet, or the process died; nothing
+on `printable`'s side starts it automatically or restarts it for you.
+
+Needs an SDXL-family checkpoint installed in ComfyUI's own
+`models/checkpoints/`. The default assumes
+[SDXL-Turbo](https://huggingface.co/stabilityai/sdxl-turbo)
+(`sd_xl_turbo_1.0_fp16.safetensors`): fast (good results in 1-4 steps) and
+produces exactly the profile this pipeline wants as input — a single
+object, flat background, product-photo framing. `--checkpoint` (CLI) / the
+"Checkpoint" field (web UI) points at a different installed checkpoint
+instead.
+
+`generate-image`'s other flags (`--steps`, `--cfg`, `--width`/`--height`,
+`--negative-prompt`, `--seed`) map directly onto that workflow's own nodes;
+omit `--seed` for a random one each run. This wraps ComfyUI's stock
+`SDTurboScheduler`/`SamplerCustom` graph (the same one its bundled
+"SDXL Turbo" example workflow uses) built directly against the HTTP API,
+not a custom node or vendored workflow file.
+
+</details>
+
 ## Design spec sheets
 
 A design spec sheet is one image carrying everything a normal photo
@@ -337,8 +496,7 @@ actual model server:
 ```bash
 # 1. The model itself -- must be running first, this is what actually
 #    holds Qwen3.8-27B in memory. Exact launch command (and why --ctx-size
-#    is sized this way) is in ROADMAP.md's "Confirmed fix for the OOM
-#    crashes" section.
+#    is sized this way) is in ROADMAP.md's "OOM crashes" section.
 llama-server-rocm --model ... --mmproj ... --host 0.0.0.0 --port 8080
 
 # 2. The thin proxy -- an HTTP client against step 1's :8080, nothing more.
@@ -349,7 +507,7 @@ bash ~/vlm-server/run.sh   # foreground, leave it running
 
 Both scripts and the servers they run live outside this repo
 (machine-specific infrastructure, not code this project ships) — see
-`ROADMAP.md`'s "Confirmed fix for the OOM crashes" section for the actual
+`ROADMAP.md`'s "OOM crashes" section for the actual
 reference `llama-server-rocm` launch command and why `--ctx-size`
 specifically is sized the way it is (the one flag with real project-specific
 reasoning behind it; the rest are standard `llama-server`/`llama.cpp`
@@ -525,6 +683,19 @@ Same rule as above: `--inexact`/`--no-sync` on every command here is
 deliberate, not optional, once a GPU backend is installed. Harmless either
 way (skips a redundant sync/reconcile once the venv already matches), so
 there's no reason not to always use it.
+
+The texture-baking tests need the `bake` extra and skip without it, so a bare
+run reports them as skipped rather than failed:
+
+```bash
+uv run --extra bake --inexact pytest -q   # 63 passed, 2 skipped
+uv run --no-sync pytest -q                # 57 passed, 8 skipped
+```
+
+Run the first form before touching `--game-asset`, `printable bake`, or
+anything under `pipeline/bake.py` — the skip is there so CI stays green
+without pulling `xatlas` onto every runner, not because the tests are
+optional.
 
 The test suite runs on CPU with no model weights and pins the behaviours that
 are easy to regress:

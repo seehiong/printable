@@ -1,6 +1,6 @@
 [project]
 name = "printable"
-version = "0.1.1"
+version = "0.2.0"
 description = "Turn a photo into a 3D-printable STL"
 readme = "README.md"
 license = "MIT"
@@ -46,6 +46,19 @@ api = [
 ]
 spec = [
     "httpx>=0.27",
+]
+# Text-to-image via an external ComfyUI server (`printable generate-image`,
+# and `printable serve`'s web UI). Same httpx dependency as `spec` -- a
+# different HTTP client, not shared -- since the two features don't need to
+# be installed together.
+comfyui = [
+    "httpx>=0.27",
+]
+# --game-asset / `printable bake`: UV-unwraps the reduced mesh so color and
+# surface detail can be baked into textures. Hunyuan3D's hy3dpaint already
+# installs it; TripoSR-only setups need this extra.
+bake = [
+    "xatlas>=0.0.9",
 ]
 # Depth/normal geometry-cues stage. transformers-native -- no separate
 # vendored repo, unlike the AI backends in backends/ai.py. No version floor

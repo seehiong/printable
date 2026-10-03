@@ -2156,7 +2156,7 @@ wheels = [
 
 [[package]]
 name = "printable"
-version = "0.1.1"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "fast-simplification" },
@@ -2179,6 +2179,12 @@ api = [
     { name = "fastapi" },
     { name = "python-multipart" },
     { name = "uvicorn", extra = ["standard"] },
+]
+bake = [
+    { name = "xatlas" },
+]
+comfyui = [
+    { name = "httpx" },
 ]
 depth = [
     { name = "transformers" },
@@ -2206,6 +2212,7 @@ dev = [
 requires-dist = [
     { name = "fast-simplification", specifier = ">=0.1.7" },
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.110" },
+    { name = "httpx", marker = "extra == 'comfyui'", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'spec'", specifier = ">=0.27" },
     { name = "manifold3d", specifier = ">=2.3" },
     { name = "networkx", specifier = ">=3.0" },
@@ -2220,8 +2227,9 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'depth'" },
     { name = "trimesh", specifier = ">=4.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'api'", specifier = ">=0.29" },
+    { name = "xatlas", marker = "extra == 'bake'", specifier = ">=0.0.9" },
 ]
-provides-extras = ["repair", "preprocess", "api", "spec", "depth"]
+provides-extras = ["repair", "preprocess", "api", "spec", "comfyui", "bake", "depth"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -4312,6 +4320,56 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/dd/b2/381be8cfdee792dd117872481b6e378f85c957dd7c5bca38897b08f765fd/werkzeug-3.1.8.tar.gz", hash = "sha256:9bad61a4268dac112f1c5cd4630a56ede601b6ed420300677a869083d70a4c44", size = 875852, upload-time = "2026-04-02T18:49:14.268Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/93/8c/2e650f2afeb7ee576912636c23ddb621c91ac6a98e66dc8d29c3c69446e1/werkzeug-3.1.8-py3-none-any.whl", hash = "sha256:63a77fb8892bf28ebc3178683445222aa500e48ebad5ec77b0ad80f8726b1f50", size = 226459, upload-time = "2026-04-02T18:49:12.72Z" },
+]
+
+[[package]]
+name = "xatlas"
+version = "0.0.11"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7c/fe/32adb4dbdf5485c185de9b62b83d434f12ca5be8a000d9882c871808987b/xatlas-0.0.11.tar.gz", hash = "sha256:72f0bc6c42c19252be87e947d9dfe251c8d6c6943fd43e3d173ddc6b1afad693", size = 7718208, upload-time = "2025-07-04T16:46:43.315Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/63/37/ef61e4637d92bd7a79ce762a3406375fb2bf6d430796e3aa408d577fc73a/xatlas-0.0.11-cp310-cp310-macosx_10_14_x86_64.whl", hash = "sha256:8275d2b38b5888d7bb13c10b5704e9469ba0c35eba3e8d61f9120caede4e1621", size = 222385, upload-time = "2025-07-04T16:45:21.335Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/d0/56fc00dc1b449db824f81ce82724eb11b8e4deb6ab806f82bf408d1bf9c7/xatlas-0.0.11-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:ed78fddec204e7ee42a14672df3adea54cbae3d2aa366e23a80163eb4a43b749", size = 199833, upload-time = "2025-07-04T16:45:22.689Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/c1/bee69092bfb9906edad278fc7a4b7a1662c5a3b288dd191ed7b8ec381dcb/xatlas-0.0.11-cp310-cp310-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:00095691e1725eacb84370b3e8151ddebea050f0992c08fc02773a24663901fd", size = 267932, upload-time = "2025-07-04T16:45:23.786Z" },
+    { url = "https://files.pythonhosted.org/packages/db/6b/faefe42f007abc2e3ea94d16e74577837106842711fddd2c1dce0a26af6b/xatlas-0.0.11-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:dc1eefc14b69bf9ae4a529809cf9ceca50c45b87f2fff5220a80291b3ff2e3f0", size = 261604, upload-time = "2025-07-04T16:45:25.109Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/b0/84a3770b11d693aa0aca38d374a32f30613571802abedf5fd3d7a6cc43ae/xatlas-0.0.11-cp310-cp310-musllinux_1_2_i686.whl", hash = "sha256:cb2e790bfbde25af65f1d7ffa9a7e2c3bacf964cec7a0503732b82d7c805f783", size = 1410910, upload-time = "2025-07-04T16:45:26.377Z" },
+    { url = "https://files.pythonhosted.org/packages/45/6f/1744898c8096fd1c91950e8b5d19244d88acb92dbaa9d4d579e9ea304518/xatlas-0.0.11-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:f7643d17f9c75f37a82c497e94ee280455a7e72246da600ac30df8abc69dc774", size = 1287993, upload-time = "2025-07-04T16:45:27.683Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/7b/6da64b23378b4f6d4e47e415e6ea1635ce9bcf78d1e99c2e7a105fb8dfc1/xatlas-0.0.11-cp310-cp310-win32.whl", hash = "sha256:20b506f75572a64e463039e7b28722031bc6f1e96165b5d3c214b82487f6a147", size = 184644, upload-time = "2025-07-04T16:45:28.788Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/80/059ced56f634b37a2e06ecb5e3f85d2c11d8494f23318f856d95b6789b8b/xatlas-0.0.11-cp310-cp310-win_amd64.whl", hash = "sha256:c6030feb083bd1cead948246445c9b997c80cd1b1300d0f52c3b5e745c294462", size = 206203, upload-time = "2025-07-04T16:45:29.771Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/11/70b7d671884a0b667832d90e7c2097d9d7c2e6364a06b1bf4a7e1a6410aa/xatlas-0.0.11-cp311-cp311-macosx_10_14_x86_64.whl", hash = "sha256:364bb9f8a90d66490ea409c8f697400daece61cb6b2806d4365a1ed1a22d9025", size = 223436, upload-time = "2025-07-04T16:45:30.852Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/ff/884c13f9380ae028283b14edd43e1b47c9874884edbc164fc3be99027d2e/xatlas-0.0.11-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:68c2e52266a0126d48ae79634f3a9d476aaebc83eda7a15b767e122241c2adbe", size = 201013, upload-time = "2025-07-04T16:45:31.937Z" },
+    { url = "https://files.pythonhosted.org/packages/78/83/f78c7b6a2ec3961446400f455e22de51050e7d8790f382b27925d950a15f/xatlas-0.0.11-cp311-cp311-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:747edb43d8d9747cf8d36e280c6c320740efc260ef18d56fac62447a0aba3146", size = 268566, upload-time = "2025-07-04T16:45:33.379Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/e2/603763b0c7ca641c50d571d0b8f961c152d9039e0febeb269baa942ddf2d/xatlas-0.0.11-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c044ee009a427898b26c0929646bfb0e0356f6762be40a140f4af41a33026208", size = 262197, upload-time = "2025-07-04T16:45:34.431Z" },
+    { url = "https://files.pythonhosted.org/packages/38/a8/6c90414b9bbbec5bb1536983aa374b2d182392d9d13422b319234b918b23/xatlas-0.0.11-cp311-cp311-musllinux_1_2_i686.whl", hash = "sha256:e87662f784ed6245db45771c80fb0459500547482ac1561b2c008ebfd01c2131", size = 1411957, upload-time = "2025-07-04T16:45:35.675Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/cb/2835c85c45fdc951d447ba083b0cd6b69d5d129f6c3a37585a30ed16f392/xatlas-0.0.11-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:8198cc3d8a30a7b1c3f801b7ff2d28e6ca355900d4e1955698475bd53e60cf57", size = 1288950, upload-time = "2025-07-04T16:45:36.901Z" },
+    { url = "https://files.pythonhosted.org/packages/76/ee/e6d8c448b8bd88197548a2f83b3e3121b5e447152055b548658d2334cfab/xatlas-0.0.11-cp311-cp311-win32.whl", hash = "sha256:5d1a042c599a934391e118d77570d3a25234455d08523b0e52e63d50b7c98cc8", size = 185689, upload-time = "2025-07-04T16:45:38.245Z" },
+    { url = "https://files.pythonhosted.org/packages/02/26/626fbe77e28d8cdea9ccadc941862560b6bbccc41db5b2837c3325617620/xatlas-0.0.11-cp311-cp311-win_amd64.whl", hash = "sha256:967b2c7434d2d0412d876a7cc6d852a0bd4acdb9d68971acad302c97bf883745", size = 206764, upload-time = "2025-07-04T16:45:39.244Z" },
+    { url = "https://files.pythonhosted.org/packages/46/2c/9ef325565fc643844436d7b5c890b7ee93ac0d87c1454419be3cfb35471f/xatlas-0.0.11-cp312-cp312-macosx_10_14_x86_64.whl", hash = "sha256:6963bc0831dd1539d423e4f8199f99effdc4c21e034753c742fced2c3bab8b9c", size = 223431, upload-time = "2025-07-04T16:45:40.441Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/4f/dd97d03a7c4a59740394b5afcd77e64cba137c786e5bb177794907f0a658/xatlas-0.0.11-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:60ed8502af10c980e988bda8bc933b097899f328d61f15c4c5b9a912796493ae", size = 201053, upload-time = "2025-07-04T16:45:41.425Z" },
+    { url = "https://files.pythonhosted.org/packages/64/94/17a683ba157f72d5523f4c3a8179722556f6474b3011600860b425f246e2/xatlas-0.0.11-cp312-cp312-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:f4d7aec5931173776ce3786a2aeb16cca67b13c56bd900f18c78fb675f120312", size = 268343, upload-time = "2025-07-04T16:45:42.453Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/68/39e33ff980f60442c4294d3a4ce37000b2f2e439106f05b014f0d453c186/xatlas-0.0.11-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:19a0b0c0b1966d177e7ded15539091981c697cf8f9aee459eae9f9ecba919c07", size = 260988, upload-time = "2025-07-04T16:45:44.052Z" },
+    { url = "https://files.pythonhosted.org/packages/81/82/eae55125ccc03cec0daa06665469270d443a180d2221e4424a757087ac55/xatlas-0.0.11-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:bed71a09bfea30c2636cd31857c7f7bfd72a41a74092a4d85d770f065ac411e6", size = 1414363, upload-time = "2025-07-04T16:45:45.237Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/9b/c43bcf36516ba076cc3cba5c319a8d03f486192a06c33f9a7f06efee82f7/xatlas-0.0.11-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:b10092e3aec1fd0423198b8b7bd7bc0dba350f9a382520e79b948e5105f2ee60", size = 1291680, upload-time = "2025-07-04T16:45:46.786Z" },
+    { url = "https://files.pythonhosted.org/packages/34/13/8a708742cecf65c65d8b99d30ab567d662153b838b121e5b8f4fa5b2a9c2/xatlas-0.0.11-cp312-cp312-win32.whl", hash = "sha256:ee6d6056b0d5e15aa72e7617d4bf66d5c13aad950c5e26536eeb4bef8a6bc3f8", size = 185880, upload-time = "2025-07-04T16:45:48.21Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/a5/5a73459ff4e2d3618d8b6cabc28d6f2369e3bf772cf2c68b26e126295dff/xatlas-0.0.11-cp312-cp312-win_amd64.whl", hash = "sha256:5f3cb843ac313af7cd81c72d4e3c16554d00108b9b8b28973e7eb87f0f30d54c", size = 207923, upload-time = "2025-07-04T16:45:49.217Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/e7/1dd383c0d28e396f16eee548e2b3f9f4cec8d3ab3db004c8bbcf57a44939/xatlas-0.0.11-cp313-cp313-macosx_10_14_x86_64.whl", hash = "sha256:7d41023193a433ea783df563ccde2bb8bb039dca0896469a3cb32e58db9763da", size = 223491, upload-time = "2025-07-04T16:45:50.239Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/64/ccc8ec8aa31eaa09b8b2b8922c50d97af8d41a24254499f5eaf926352c26/xatlas-0.0.11-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:70a459492c0ffcf7e37a77ac37f8a4483acd87aee07de9600e4f056e56c326dd", size = 201092, upload-time = "2025-07-04T16:45:51.224Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/9f/2bd9b63d24751db2ba6c85944e09be2bc897aaace224d22dbc764a19487f/xatlas-0.0.11-cp313-cp313-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:7739f75c588808a0ad0b3a730661143dddddceec84401451989b829d9986df94", size = 268197, upload-time = "2025-07-04T16:45:52.673Z" },
+    { url = "https://files.pythonhosted.org/packages/85/84/df846c46097331af6a10d3675edefc2ab893cb784c02fc7ab1e8cc580457/xatlas-0.0.11-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1c2ba5ca5e26dba5e9a04aab98ee5de0e5a0e8c87a1feae83da11052b83d86dd", size = 260836, upload-time = "2025-07-04T16:45:53.718Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/9a/962bc0ddcce7c81e9f08b020132d8b0143f18d8ee49744aca669a2fe1a1b/xatlas-0.0.11-cp313-cp313-musllinux_1_2_i686.whl", hash = "sha256:494206aa15a28f44691acd1575344181717b300e5602187e7db04fa72e0d1e9b", size = 1414366, upload-time = "2025-07-04T16:45:54.942Z" },
+    { url = "https://files.pythonhosted.org/packages/11/15/fe587b62db22b9d5220576995de67d7d00f0d3b8a6d461cc670831820676/xatlas-0.0.11-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:ff4c084c1f2cccbc781302484613c4d87fcbab1fa4972a4e84194acb18bbf9d9", size = 1291580, upload-time = "2025-07-04T16:45:56.18Z" },
+    { url = "https://files.pythonhosted.org/packages/73/c6/8eba622eead5571c73fb997095ab156ba40f8e99471b9b37053d32a338d4/xatlas-0.0.11-cp313-cp313-win32.whl", hash = "sha256:12d5f37f60bc6a82e538dc553eb3ebe85fd622ecb9b6d32505db4c3ea1202706", size = 185822, upload-time = "2025-07-04T16:45:57.222Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/91/116e12b0b7bce720eea981b06b39150ceaef49b044bd3b535316443cfd05/xatlas-0.0.11-cp313-cp313-win_amd64.whl", hash = "sha256:81431d19c3a11dc3fbae95460cd6b16239636b21fa7c30bd5796976a03844ede", size = 207911, upload-time = "2025-07-04T16:45:58.526Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/cc/914cd8dec344443f1e26d47a3db1d92ec45fe86c62b8147bcb7ca616644f/xatlas-0.0.11-pp310-pypy310_pp73-macosx_10_15_x86_64.whl", hash = "sha256:e789e85f2cdb451ee0ba91ec274f0e1d1a8daaf75b467dcd7533edf9cd220699", size = 222495, upload-time = "2025-07-04T16:46:17.956Z" },
+    { url = "https://files.pythonhosted.org/packages/de/8d/1b0240c9472cacbd787cda227c7a7d3e3251c5267707fded47beb2556948/xatlas-0.0.11-pp310-pypy310_pp73-macosx_11_0_arm64.whl", hash = "sha256:b26e2cfb175a049ef44ff6e01bbecc52aff740e8cbab0e74ce2349a1bab220fc", size = 199701, upload-time = "2025-07-04T16:46:18.928Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/da/426cfed3879d7b692080428c7b287d323aa1b6e52895c01ea698860c46ed/xatlas-0.0.11-pp310-pypy310_pp73-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:f90b69073aef1a39fe0b708576ffe4034d9508ebe9edcbfbd4092e1e683eff32", size = 267893, upload-time = "2025-07-04T16:46:20.011Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/24/cafe4af289301c84e194165bb4ae10014cc40fca2430ef2987bff968d169/xatlas-0.0.11-pp310-pypy310_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c6ac223ffc49167b553ff7e81af7b8b5a14a73d5b9e98789821511483b4cdee9", size = 262002, upload-time = "2025-07-04T16:46:21.107Z" },
+    { url = "https://files.pythonhosted.org/packages/75/86/16ea4181e60462f773109e384a08db3fe79b1d73c1765e77adeefeccac31/xatlas-0.0.11-pp310-pypy310_pp73-win_amd64.whl", hash = "sha256:426c73173353800414a05270005070333afebfd1ab130f73767738d04664ba8e", size = 205708, upload-time = "2025-07-04T16:46:22.196Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/66/e33fe835e6e3c0c38109a367009e88554de9eefa4e65c01c1f6360c487d0/xatlas-0.0.11-pp311-pypy311_pp73-macosx_10_15_x86_64.whl", hash = "sha256:8facf1189f775f0c0ff9f67b0fb78cc18d8a40d5b3d56af61238315fd204205d", size = 223700, upload-time = "2025-07-04T16:46:23.199Z" },
+    { url = "https://files.pythonhosted.org/packages/de/0b/d9d8963dbf0b1aa62a2d4709574490780c0f5b78d0fade21672cdace000b/xatlas-0.0.11-pp311-pypy311_pp73-macosx_11_0_arm64.whl", hash = "sha256:ad5d661b15bbcba44a37d4053d67553c3625739421805061becbda285be9b663", size = 200990, upload-time = "2025-07-04T16:46:25.747Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/34/ce1812f2396ee187f9744e415050f44112089911de3ef8b1bff7b3e00e8b/xatlas-0.0.11-pp311-pypy311_pp73-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:430a0553f539f4d2ea0180cbfa7888b596393ae9dd1ad4b046df6895b87f4703", size = 268799, upload-time = "2025-07-04T16:46:26.831Z" },
+    { url = "https://files.pythonhosted.org/packages/73/3f/34beca37b4b66fa11f7932ef73f147a43c413b704ccf029d638eccb23ac2/xatlas-0.0.11-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:54569a3aba9c1081ca23209391feecd1639228aad08c384c2995432dd57a3919", size = 263463, upload-time = "2025-07-04T16:46:28.093Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/95/6e7999da339ea492ad562b6b46a2f58e6d1c8e3d87f6f0acb67fb426ebc0/xatlas-0.0.11-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:3e4b3fd1b22d44d669c997c2196d608060220fcc631fa258fb8530c1c34563e3", size = 206464, upload-time = "2025-07-04T16:46:29.476Z" },
 ]
 
 [[package]]

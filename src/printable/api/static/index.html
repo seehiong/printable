@@ -157,13 +157,22 @@
      ------------------------------------------------------------ */
   .field { display: flex; flex-direction: column; gap: 6px; }
   .field label { font-size: 12.5px; color: var(--text-dim); }
-  .field select, .field input[type="number"] {
+  .field select, .field input[type="number"], .field input[type="text"], .field textarea {
     font-family: var(--font-body); font-size: 13.5px; color: var(--text); background: var(--surface-2);
     border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
   }
+  .field textarea { resize: vertical; min-height: 64px; font-family: var(--font-body); line-height: 1.4; }
   .field select:disabled { color: var(--text-faint); }
   .field-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .field-row label { font-size: 13px; color: var(--text); }
+
+  .txt2img-advanced { display: flex; flex-direction: column; gap: 14px; }
+  .txt2img-advanced summary { font-size: 12.5px; color: var(--text-dim); cursor: pointer; padding: 2px 0; }
+  .txt2img-advanced summary:hover { color: var(--text); }
+  .txt2img-advanced[open] summary { margin-bottom: 6px; }
+  .txt2img-preview { width: 100%; border-radius: 8px; border: 1px solid var(--border); display: block; }
+  .txt2img-actions { display: flex; gap: 8px; }
+  .txt2img-actions .btn { flex: 1 1 0; }
 
   .tab-group { display: flex; gap: 3px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 3px; }
   .tab-btn {
@@ -301,6 +310,66 @@
         Auto-detect ever mis-routes one of these (e.g. as a spec sheet).
       </div>
 
+      <div class="stat-group" id="txt2img-group">
+        <div class="stat-label">Text to image (ComfyUI)</div>
+        <div class="field">
+          <label for="txt2img-prompt">Description</label>
+          <textarea id="txt2img-prompt" rows="3" placeholder="ancient Chinese jade bi disk, circular ceremonial flat jadeite ring, intricate coiled dragon relief carvings, isolated on pure white background, photorealistic, 3d asset preview"></textarea>
+        </div>
+        <div class="field">
+          <label for="txt2img-negative">Negative prompt</label>
+          <textarea id="txt2img-negative" rows="2">text, watermark, blurry, low quality, deformed</textarea>
+        </div>
+        <div class="field-row">
+          <label for="txt2img-mirror-input">Force left-right symmetry (mirror left half)</label>
+          <input type="checkbox" id="txt2img-mirror-input">
+        </div>
+        <div class="panel-empty" id="txt2img-mirror-hint" style="font-size:12px; color:var(--text-faint); line-height:1.5; margin-top:-10px;">
+          Replaces the right half of the generated image with a mirror of
+          the left half -- useful for symmetric objects (censers, disks,
+          anything with matching handles) where the model draws the two
+          sides differently. Applied once, right after generation.
+        </div>
+        <details class="txt2img-advanced">
+          <summary>Advanced</summary>
+          <div class="field">
+            <label for="txt2img-seed">Seed (blank = random)</label>
+            <input type="number" id="txt2img-seed" min="0" step="1" placeholder="random">
+          </div>
+          <div class="field">
+            <label for="txt2img-steps">Steps</label>
+            <input type="number" id="txt2img-steps" value="4" min="1" max="10" step="1">
+          </div>
+          <div class="field">
+            <label for="txt2img-size">Width x height (px)</label>
+            <div style="display:flex; gap:8px;">
+              <input type="number" id="txt2img-width" value="1024" min="256" step="64">
+              <input type="number" id="txt2img-height" value="1024" min="256" step="64">
+            </div>
+          </div>
+          <div class="field">
+            <label for="txt2img-checkpoint">Checkpoint</label>
+            <input type="text" id="txt2img-checkpoint" value="sd_xl_turbo_1.0_fp16.safetensors">
+          </div>
+          <div class="field">
+            <label for="txt2img-url">ComfyUI server URL</label>
+            <input type="text" id="txt2img-url" value="http://localhost:8188">
+          </div>
+        </details>
+        <button class="btn" id="btn-txt2img" type="button">Generate image</button>
+        <div class="panel-empty" id="txt2img-status" style="font-size:12px; color:var(--text-faint); line-height:1.5;"></div>
+        <div id="txt2img-result" style="display:none; flex-direction:column; gap:10px;">
+          <img class="txt2img-preview" id="txt2img-preview" alt="Generated image">
+          <div class="panel-empty" id="txt2img-seed-info" style="font-size:12px; color:var(--text-faint); line-height:1.5;"></div>
+          <div class="txt2img-actions">
+            <a class="btn" id="btn-txt2img-download" download="generated.png">Download PNG</a>
+            <button class="btn primary" id="btn-txt2img-use" type="button">Use this image ↓</button>
+          </div>
+        </div>
+      </div>
+
+      <hr class="rule">
+
       <div class="stat-group">
         <div class="stat-label" id="photo-label">Photo</div>
         <div class="drop-photo" id="drop-photo">
@@ -315,19 +384,62 @@
         <select id="backend-select"></select>
       </div>
 
-      <div class="field">
+      <div class="field" id="size-row">
         <label for="size-input" id="size-label">Size (mm, longest axis)</label>
         <input type="number" id="size-input" placeholder="100" min="1" step="1">
       </div>
 
-      <div class="field-row">
+      <div class="field-row" id="hollow-row">
         <label for="hollow-input">Hollow</label>
         <input type="checkbox" id="hollow-input">
       </div>
 
-      <div class="field-row">
+      <div class="field-row" id="add-base-row">
         <label for="add-base-input">Base plate</label>
         <input type="checkbox" id="add-base-input" checked>
+      </div>
+
+      <div class="field-row" id="game-asset-row">
+        <label for="game-asset-input">Game asset (textured low-poly GLB)</label>
+        <input type="checkbox" id="game-asset-input">
+      </div>
+      <div class="panel-empty" id="game-asset-hint" style="font-size:12px; color:var(--text-faint); line-height:1.5; margin-top:-10px;">
+        One .glb for a game engine instead of a printable STL: reduced to the
+        triangle budget, with color and surface detail baked into a texture
+        and normal map. The reference image is downloadable alongside it.
+        TripoSR or Hunyuan3D only.
+      </div>
+      <div class="field" id="game-asset-faces-row" style="display:none;">
+        <label for="game-asset-faces-input">Max faces (triangle budget)</label>
+        <input type="number" id="game-asset-faces-input" value="3500" min="100" step="100">
+      </div>
+      <div class="field" id="game-asset-texture-row" style="display:none;">
+        <label for="game-asset-texture-input">Texture size (px)</label>
+        <select id="game-asset-texture-input">
+          <option value="512">512</option>
+          <option value="1024" selected>1024</option>
+          <option value="2048">2048</option>
+        </select>
+      </div>
+      <div id="game-asset-scale-row" style="display:none; flex-direction:column; gap:10px;">
+        <div class="field">
+          <label for="game-asset-scale-x-input">Axis scale — X</label>
+          <input type="number" id="game-asset-scale-x-input" value="1" min="0.05" step="0.05">
+        </div>
+        <div class="field">
+          <label for="game-asset-scale-y-input">Axis scale — Y</label>
+          <input type="number" id="game-asset-scale-y-input" value="1" min="0.05" step="0.05">
+        </div>
+        <div class="field">
+          <label for="game-asset-scale-z-input">Axis scale — Z</label>
+          <input type="number" id="game-asset-scale-z-input" value="1" min="0.05" step="0.05">
+        </div>
+      </div>
+      <div class="panel-empty" id="game-asset-scale-hint" style="display:none; font-size:12px; color:var(--text-faint); line-height:1.5; margin-top:-10px;">
+        No scale-to-mm runs in this mode, so a single-image backend's
+        guessed depth axis ships uncorrected -- squash whichever of these
+        comes out too thick. Which axis is "depth" isn't fixed across
+        backends or generations; trial and error, same as manual rotation.
       </div>
 
       <div class="field-row" id="texture-row">
@@ -497,6 +609,7 @@
         Download STL
       </a>
       <a class="btn" id="btn-download-glb" download="result.glb" style="display:none;">Download colored GLB</a>
+      <a class="btn" id="btn-download-reference" download="reference.png" style="display:none;">Download reference image</a>
       <button class="btn" id="btn-generate-again">Generate another</button>
     </div>
 
@@ -657,6 +770,7 @@
         // so tabs never apply.
         btnDownloadStl.style.display = "none";
         btnDownloadGlb.style.display = "none";
+        btnDownloadReference.style.display = "none";
         loadedFiles.stl = null;
         loadedFiles.glb = null;
         currentJobStatus = null;
@@ -1382,6 +1496,21 @@
   var textureInput = document.getElementById("texture-input");
   var textureRow = document.getElementById("texture-row");
   var textureHint = document.getElementById("texture-hint");
+  var sizeRow = document.getElementById("size-row");
+  var hollowRow = document.getElementById("hollow-row");
+  var addBaseRow = document.getElementById("add-base-row");
+  var gameAssetInput = document.getElementById("game-asset-input");
+  var gameAssetRow = document.getElementById("game-asset-row");
+  var gameAssetHint = document.getElementById("game-asset-hint");
+  var gameAssetFacesRow = document.getElementById("game-asset-faces-row");
+  var gameAssetFacesInput = document.getElementById("game-asset-faces-input");
+  var gameAssetTextureRow = document.getElementById("game-asset-texture-row");
+  var gameAssetTextureInput = document.getElementById("game-asset-texture-input");
+  var gameAssetScaleRow = document.getElementById("game-asset-scale-row");
+  var gameAssetScaleHint = document.getElementById("game-asset-scale-hint");
+  var gameAssetScaleXInput = document.getElementById("game-asset-scale-x-input");
+  var gameAssetScaleYInput = document.getElementById("game-asset-scale-y-input");
+  var gameAssetScaleZInput = document.getElementById("game-asset-scale-z-input");
   var geometryCuesInput = document.getElementById("geometry-cues-input");
   var geometryCuesRow = document.getElementById("geometry-cues-row");
   var geometryCuesHint = document.getElementById("geometry-cues-hint");
@@ -1423,6 +1552,8 @@
   var OBJECT_MODE_PREFERRED_BACKENDS = ["triposr", "hunyuan3d"];
 
   function preferObjectReconstructionBackend() {
+    // Leave an explicit 3D choice alone: only move off a 2D backend.
+    if (OBJECT_MODE_PREFERRED_BACKENDS.indexOf(backendSelect.value) !== -1) return;
     for (var i = 0; i < OBJECT_MODE_PREFERRED_BACKENDS.length; i++) {
       var name = OBJECT_MODE_PREFERRED_BACKENDS[i];
       for (var j = 0; j < backendSelect.options.length; j++) {
@@ -1461,16 +1592,38 @@
       ? "Size override (mm, optional — uses spec's total_height if blank)"
       : "Size (mm, longest axis)";
 
-    geometryCuesRow.style.display = hideBackendOptions ? "none" : "flex";
-    geometryCuesHint.style.display = hideBackendOptions ? "none" : "block";
-    if (hideBackendOptions) geometryCuesInput.checked = false;
-    textureRow.style.display = hideBackendOptions ? "none" : "flex";
-    textureHint.style.display = hideBackendOptions ? "none" : "block";
-    if (hideBackendOptions) textureInput.checked = false;
+    // --game-asset has no --sheet/--spec-all-views/auto-detect equivalent
+    // (same restriction the CLI enforces) -- only offered in plain mode.
+    // It also skips scale-to-mm/base/hollow entirely and forces
+    // options.texture=true server-side (see pipeline/run.py), so those
+    // fields get hidden too once it's checked -- they'd otherwise look
+    // like they do something when they're silently ignored.
+    var hideGameAsset = auto || spec || sheet;
+    if (hideGameAsset) gameAssetInput.checked = false;
+    var gameAsset = !hideGameAsset && gameAssetInput.checked;
 
-    if (spec || sheet) preferObjectReconstructionBackend();
+    gameAssetRow.style.display = hideGameAsset ? "none" : "flex";
+    gameAssetHint.style.display = hideGameAsset ? "none" : "block";
+    gameAssetFacesRow.style.display = gameAsset ? "flex" : "none";
+    gameAssetTextureRow.style.display = gameAsset ? "flex" : "none";
+    gameAssetScaleRow.style.display = gameAsset ? "flex" : "none";
+    gameAssetScaleHint.style.display = gameAsset ? "block" : "none";
+    sizeRow.style.display = gameAsset ? "none" : "flex";
+    hollowRow.style.display = gameAsset ? "none" : "flex";
+    addBaseRow.style.display = gameAsset ? "none" : "flex";
+
+    var hideTexture = hideBackendOptions || gameAsset;
+    geometryCuesRow.style.display = hideTexture ? "none" : "flex";
+    geometryCuesHint.style.display = hideTexture ? "none" : "block";
+    if (hideTexture) geometryCuesInput.checked = false;
+    textureRow.style.display = hideTexture ? "none" : "flex";
+    textureHint.style.display = hideTexture ? "none" : "block";
+    if (hideTexture) textureInput.checked = false;
+
+    if (spec || sheet || gameAsset) preferObjectReconstructionBackend();
     updateGenerateEnabled();
   }
+  gameAssetInput.addEventListener("change", applyModeVisibility);
 
   autoDetectInput.addEventListener("change", function () {
     if (autoDetectInput.checked) { specModeInput.checked = false; sheetModeInput.checked = false; }
@@ -1492,6 +1645,7 @@
   var selectedPhoto = null;
   var btnDownloadStl = document.getElementById("btn-download-stl");
   var btnDownloadGlb = document.getElementById("btn-download-glb");
+  var btnDownloadReference = document.getElementById("btn-download-reference");
 
   dropPhoto.addEventListener("click", function () { photoInput.click(); });
   photoInput.addEventListener("change", function (e) {
@@ -1511,6 +1665,111 @@
     photoFilename.textContent = file.name;
     updateGenerateEnabled();
   }
+
+  // =================================================================
+  // Text to image: prompt -> ComfyUI -> PNG, downloadable or handed
+  // straight to the photo drop zone above via "Use this image".
+  // =================================================================
+  var txt2imgPrompt = document.getElementById("txt2img-prompt");
+  var txt2imgMirrorInput = document.getElementById("txt2img-mirror-input");
+  var txt2imgNegative = document.getElementById("txt2img-negative");
+  var txt2imgSeed = document.getElementById("txt2img-seed");
+  var txt2imgSeedInfo = document.getElementById("txt2img-seed-info");
+  var txt2imgSteps = document.getElementById("txt2img-steps");
+  var txt2imgWidth = document.getElementById("txt2img-width");
+  var txt2imgHeight = document.getElementById("txt2img-height");
+  var txt2imgCheckpoint = document.getElementById("txt2img-checkpoint");
+  var txt2imgUrl = document.getElementById("txt2img-url");
+  var btnTxt2img = document.getElementById("btn-txt2img");
+  var txt2imgStatus = document.getElementById("txt2img-status");
+  var txt2imgResult = document.getElementById("txt2img-result");
+  var txt2imgPreview = document.getElementById("txt2img-preview");
+  var btnTxt2imgDownload = document.getElementById("btn-txt2img-download");
+  var btnTxt2imgUse = document.getElementById("btn-txt2img-use");
+  var txt2imgBlobUrl = null;
+
+  // Replaces the right half of an image with a horizontally-flipped copy
+  // of the left half -- forces left-right symmetry for objects (censers,
+  // disks, anything with matching handles) where the model draws the two
+  // sides differently, at the cost of erasing whatever was originally on
+  // the right (an accepted trade: the left half is picked arbitrarily as
+  // the "true" one, no attempt to reconcile the two).
+  function mirrorLeftHalf(blob) {
+    return createImageBitmap(blob).then(function (bitmap) {
+      var canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      var ctx = canvas.getContext("2d");
+      ctx.drawImage(bitmap, 0, 0);
+      var halfW = Math.floor(bitmap.width / 2);
+      ctx.save();
+      ctx.translate(bitmap.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(bitmap, 0, 0, halfW, bitmap.height, 0, 0, halfW, bitmap.height);
+      ctx.restore();
+      return new Promise(function (resolve) {
+        canvas.toBlob(function (out) { resolve(out); }, "image/png");
+      });
+    });
+  }
+
+  btnTxt2img.addEventListener("click", function () {
+    var prompt = txt2imgPrompt.value.trim();
+    if (!prompt) {
+      txt2imgStatus.textContent = "Type a description first.";
+      return;
+    }
+    btnTxt2img.disabled = true;
+    txt2imgResult.style.display = "none";
+    txt2imgStatus.textContent = "Generating… (first call can be slow while ComfyUI loads the checkpoint)";
+
+    var seed = parseInt(txt2imgSeed.value, 10);
+    var mirrored = txt2imgMirrorInput.checked;
+    var params = null;
+    fetch("/api/txt2img", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: prompt,
+        negative_prompt: txt2imgNegative.value || undefined,
+        steps: parseInt(txt2imgSteps.value, 10) || 4,
+        width: parseInt(txt2imgWidth.value, 10) || 1024,
+        height: parseInt(txt2imgHeight.value, 10) || 1024,
+        seed: isNaN(seed) ? undefined : seed,
+        checkpoint: txt2imgCheckpoint.value || undefined,
+        comfyui_url: txt2imgUrl.value || undefined,
+      }),
+    }).then(function (r) {
+      if (!r.ok) {
+        return r.json().then(function (body) {
+          throw new Error((body && body.detail) || ("HTTP " + r.status));
+        }, function () { throw new Error("HTTP " + r.status); });
+      }
+      try { params = JSON.parse(r.headers.get("X-Printable-Params") || "null"); } catch (e) { params = null; }
+      if (params && mirrored) params.mirrored = true;
+      return r.blob();
+    }).then(function (blob) {
+      return mirrored ? mirrorLeftHalf(blob) : blob;
+    }).then(function (blob) {
+      if (txt2imgBlobUrl) URL.revokeObjectURL(txt2imgBlobUrl);
+      txt2imgBlobUrl = URL.createObjectURL(blob);
+      txt2imgPreview.src = txt2imgBlobUrl;
+      btnTxt2imgDownload.href = txt2imgBlobUrl;
+      txt2imgResult.style.display = "flex";
+      txt2imgStatus.textContent = "";
+      txt2imgSeedInfo.textContent = params
+        ? "Seed " + params.seed + (mirrored ? " · mirrored" : "") + ". Enter it under Advanced to reproduce this image."
+        : "";
+      btnTxt2imgUse.onclick = function () {
+        setPhoto(new File([blob], "generated.png", { type: "image/png" }));
+        announce("Generated image selected as the photo to generate from.");
+      };
+    }).catch(function (err) {
+      txt2imgStatus.textContent = "Could not generate: " + err.message;
+    }).finally(function () {
+      btnTxt2img.disabled = false;
+    });
+  });
 
   function updateGenerateEnabled() {
     if (autoDetectInput.checked) {
@@ -1588,8 +1847,19 @@
     } else {
       endpoint = "/api/jobs";
       form.append("size", sizeInput.value || "100");
-      if (geometryCuesInput.checked) form.append("opt", "geometry_cues=true");
-      if (textureInput.checked) form.append("opt", "texture=true");
+      if (gameAssetInput.checked) {
+        form.append("game_asset", "true");
+        form.append("game_asset_max_faces", gameAssetFacesInput.value || "3500");
+        form.append("game_asset_texture_size", gameAssetTextureInput.value || "1024");
+        var sx = gameAssetScaleXInput.value || "1", sy = gameAssetScaleYInput.value || "1",
+            sz = gameAssetScaleZInput.value || "1";
+        if (sx !== "1") form.append("opt", "scale_x=" + sx);
+        if (sy !== "1") form.append("opt", "scale_y=" + sy);
+        if (sz !== "1") form.append("opt", "scale_z=" + sz);
+      } else {
+        if (geometryCuesInput.checked) form.append("opt", "geometry_cues=true");
+        if (textureInput.checked) form.append("opt", "texture=true");
+      }
     }
 
     panelForm.style.display = "none";
@@ -1629,7 +1899,8 @@
     "repair": "Closing holes and removing floating fragments so it's watertight",
     "prep": "Scaling to size, orienting, adding a base",
     "validate": "Checking wall thickness, overhangs, and build volume",
-    "export": "Writing the STL file"
+    "game-asset-bake": "Reducing to the triangle budget and baking color and surface detail into textures",
+    "export": "Writing the model file"
   };
 
   function stageRow(name) {
@@ -1762,31 +2033,46 @@
           return;
         }
         jobStatus = status;
-        // The STL is always the print target, downloadable regardless of
-        // which tab the viewer defaults to. GLB download only offered when
-        // one was actually produced.
-        btnDownloadStl.style.display = "inline-flex";
-        btnDownloadStl.href = "/api/jobs/" + jobId + "/stl";
-        btnDownloadGlb.style.display = jobStatus.has_glb ? "inline-flex" : "none";
-        if (jobStatus.has_glb) btnDownloadGlb.href = "/api/jobs/" + jobId + "/glb";
         renderGeometryCues(jobId, jobStatus.has_geometry_cues);
 
-        var stlPromise = fetch("/api/jobs/" + jobId + "/stl").then(function (r) { return r.arrayBuffer(); });
-        var glbPromise = jobStatus.has_glb
-          ? fetch("/api/jobs/" + jobId + "/glb").then(function (r) { return r.arrayBuffer(); })
-          : Promise.resolve(null);
+        // A game-asset job produced one file, a .glb, and nothing else --
+        // no STL exists to fetch (see /api/jobs/{id}/stl's own guard
+        // against this). Otherwise the STL is always the print target,
+        // downloadable regardless of which tab the viewer defaults to,
+        // with GLB download offered only when one was actually produced.
+        var stlPromise, glbPromise;
+        btnDownloadReference.style.display = jobStatus.game_asset ? "inline-flex" : "none";
+        btnDownloadReference.href = "/api/jobs/" + jobId + "/reference";
+        if (jobStatus.game_asset) {
+          btnDownloadStl.style.display = "none";
+          btnDownloadGlb.style.display = "inline-flex";
+          btnDownloadGlb.textContent = "Download game model (.glb)";
+          btnDownloadGlb.href = "/api/jobs/" + jobId + "/glb";
+          stlPromise = Promise.resolve(null);
+          glbPromise = fetch("/api/jobs/" + jobId + "/glb").then(function (r) { return r.arrayBuffer(); });
+        } else {
+          btnDownloadStl.style.display = "inline-flex";
+          btnDownloadStl.href = "/api/jobs/" + jobId + "/stl";
+          btnDownloadGlb.textContent = "Download colored GLB";
+          btnDownloadGlb.style.display = jobStatus.has_glb ? "inline-flex" : "none";
+          if (jobStatus.has_glb) btnDownloadGlb.href = "/api/jobs/" + jobId + "/glb";
+          stlPromise = fetch("/api/jobs/" + jobId + "/stl").then(function (r) { return r.arrayBuffer(); });
+          glbPromise = jobStatus.has_glb
+            ? fetch("/api/jobs/" + jobId + "/glb").then(function (r) { return r.arrayBuffer(); })
+            : Promise.resolve(null);
+        }
         return Promise.all([stlPromise, glbPromise]);
       })
       .then(function (bufs) {
         if (!bufs) return;
         var stlBuf = bufs[0], glbBuf = bufs[1];
-        var stlMesh = parseSTL(stlBuf);
+        var stlMesh = stlBuf ? parseSTL(stlBuf) : null;
         var glbMesh = glbBuf ? parseGLB(glbBuf) : null;
 
         return (glbMesh && glbMesh.hasTexture ? createImageBitmap(glbMesh.imageBlob) : Promise.resolve(null))
           .then(function (bitmap) {
             if (bitmap && glbMesh) glbMesh.image = bitmap;
-            loadedFiles.stl = { mesh: stlMesh, name: "result.stl", byteSize: stlBuf.byteLength };
+            loadedFiles.stl = stlMesh ? { mesh: stlMesh, name: "result.stl", byteSize: stlBuf.byteLength } : null;
             loadedFiles.glb = glbMesh ? { mesh: glbMesh, name: "result.glb", byteSize: glbBuf.byteLength } : null;
             currentJobStatus = jobStatus;
             showResultPanel();
@@ -1878,8 +2164,16 @@
     } else {
       issuesGroup.style.display = "none";
     }
-    statStatus.className = "status-pill " + (status.printable ? "ok" : "warn");
-    statStatusText.textContent = status.printable ? "Printable" : "Not printable";
+    if (status.game_asset) {
+      // Not print-checked (see /api/jobs' game_asset flag): report.printable
+      // defaults true with no issues rather than a real verdict, so don't
+      // show it as one -- same reasoning as the CLI's own _print_generate_result.
+      statStatus.className = "status-pill ok";
+      statStatusText.textContent = "Game asset";
+    } else {
+      statStatus.className = "status-pill " + (status.printable ? "ok" : "warn");
+      statStatusText.textContent = status.printable ? "Printable" : "Not printable";
+    }
     renderDesignSpec(status.design_spec);
     renderClassification(status.classification);
   }

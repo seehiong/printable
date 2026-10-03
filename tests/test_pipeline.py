@@ -363,11 +363,313 @@ def test_run_exports_glb_when_backend_has_color(sample_image, tmp_path, monkeypa
     assert result.glb_path == out.with_suffix(".glb")
     assert result.glb_path.exists()
 
-    reloaded = trimesh.load(result.glb_path)
-    if isinstance(reloaded, trimesh.Scene):
-        reloaded = trimesh.util.concatenate(list(reloaded.geometry.values()))
-    assert isinstance(reloaded.visual, trimesh.visual.color.ColorVisuals)
-    assert reloaded.visual.vertex_colors[0][0] > 150, "red channel should survive the round trip"
+    # Not trimesh.load(): its own GLTF reader drops COLOR_0 back to flat
+    # white once a material is present (a real trimesh round-trip gap, not
+    # a bug in the file -- see ensure_vertex_color_material's docstring),
+    # so read the raw glTF accessors directly instead, same as a spec-
+    # compliant external renderer (Godot, Blender, three.js) would.
+    gltf, bin_chunk = _read_glb(result.glb_path)
+    color0 = _glb_attribute(gltf, bin_chunk, "COLOR_0")
+    assert color0 is not None, "expected a COLOR_0 attribute on the exported primitive"
+    assert (color0[:, 0] > 150).all(), "red channel should survive the round trip"
+    assert gltf["materials"], (
+        "a vertex-colored GLB with no material at all loads as flat white in "
+        "Godot's glTF importer -- see ensure_vertex_color_material"
+    )
+    # glTF's default metallicFactor is 1.0; left out, engines render dark chrome.
+    assert gltf["materials"][0]["pbrMetallicRoughness"]["metallicFactor"] == 0.0
+
+
+def _read_glb(path: Path) -> tuple[dict, bytes]:
+    """(glTF JSON, BIN chunk), read directly rather than through trimesh:
+    its GLTF reader drops COLOR_0 once a material is present, and ignores
+    TANGENT entirely -- neither of which a real engine does."""
+    import json
+    import struct
+
+    data = path.read_bytes()
+    length = struct.unpack("<I", data[8:12])[0]
+    offset = 12
+    chunks = {}
+    while offset < length:
+        chunk_length, chunk_type = struct.unpack("<II", data[offset : offset + 8])
+        chunks[chunk_type] = data[offset + 8 : offset + 8 + chunk_length]
+        offset += 8 + chunk_length
+    return json.loads(chunks[0x4E4F534A]), chunks.get(0x004E4942)
+
+
+_GLB_DTYPES = {5121: np.uint8, 5125: np.uint32, 5126: np.float32}
+_GLB_WIDTH = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
+
+
+def _glb_attribute(gltf: dict, bin_chunk: bytes, name: str) -> np.ndarray | None:
+    prim = gltf["meshes"][0]["primitives"][0]
+    index = prim["indices"] if name == "indices" else prim["attributes"].get(name)
+    if index is None:
+        return None
+    acc = gltf["accessors"][index]
+    view = gltf["bufferViews"][acc["bufferView"]]
+    width = _GLB_WIDTH[acc["type"]]
+    raw = np.frombuffer(
+        bin_chunk,
+        dtype=_GLB_DTYPES[acc["componentType"]],
+        count=acc["count"] * width,
+        offset=view.get("byteOffset", 0) + acc.get("byteOffset", 0),
+    )
+    return raw.reshape(-1, width) if width > 1 else raw
+
+
+def _glb_image(gltf: dict, bin_chunk: bytes, texture_index: int) -> np.ndarray:
+    import io
+
+    image = gltf["images"][gltf["textures"][texture_index]["source"]]
+    view = gltf["bufferViews"][image["bufferView"]]
+    start = view.get("byteOffset", 0)
+    data = bin_chunk[start : start + view["byteLength"]]
+    return np.asarray(Image.open(io.BytesIO(data)).convert("RGB"))
+
+
+def _colored_backend(make_mesh):
+    """A registry stand-in for "triposr" that returns make_mesh()'s mesh
+    with has_color=True (Backend(str) needs a real enum member)."""
+
+    class _Backend(GeometryBackend):
+        name = "triposr"
+        requires_gpu = False
+
+        def generate(self, request: GenerationRequest) -> GenerationResult:
+            return GenerationResult(mesh=make_mesh(), backend=Backend.TRIPOSR, has_color=True)
+
+    return _Backend
+
+
+def _half_red_half_blue_sphere() -> trimesh.Trimesh:
+    mesh = trimesh.creation.icosphere(subdivisions=5)
+    mesh.visual.vertex_colors = np.where(
+        mesh.vertices[:, :1] > 0, [220, 30, 30, 255], [30, 30, 220, 255]
+    ).astype(np.uint8)
+    return mesh
+
+
+def test_game_asset_bakes_color_into_a_textured_low_poly(sample_image, tmp_path, monkeypatch):
+    """--game-asset reduces to the budget and bakes color into a texture
+    rather than per-vertex color, which smears to blobs at a game budget.
+    The GLB must carry what an engine needs to shade it: UVs, normals and
+    tangents, a base-color texture, a normal map, and a non-metallic
+    material."""
+    pytest.importorskip("xatlas")
+    monkeypatch.setitem(registry._factories, "triposr", _colored_backend(_half_red_half_blue_sphere))
+
+    out = tmp_path / "sphere.glb"
+    result = run(
+        sample_image, backend="triposr", game_asset=True, game_asset_max_faces=600,
+        game_asset_texture_size=256, output_path=out,
+    )
+
+    assert result.report.stats["faces"] <= 600
+    assert result.report.stats["raw_faces"] == 20480
+    assert len(result.raw_color_mesh.faces) == 20480, "raw mesh must be kept untouched"
+
+    gltf, bin_chunk = _read_glb(out)
+    for attr in ("POSITION", "NORMAL", "TANGENT", "TEXCOORD_0"):
+        assert _glb_attribute(gltf, bin_chunk, attr) is not None, attr
+    material = gltf["materials"][0]
+    assert material["pbrMetallicRoughness"]["metallicFactor"] == 0.0
+    assert "normalTexture" in material
+    assert material["doubleSided"] is True  # a leftover hole shows as a cavity, not a gap
+
+    positions = _glb_attribute(gltf, bin_chunk, "POSITION")
+    uvs = _glb_attribute(gltf, bin_chunk, "TEXCOORD_0")
+    base = _glb_image(gltf, bin_chunk, material["pbrMetallicRoughness"]["baseColorTexture"]["index"])
+    px = base[
+        np.clip((uvs[:, 1] * 256).astype(int), 0, 255),
+        np.clip((uvs[:, 0] * 256).astype(int), 0, 255),
+    ].astype(int)
+    red_side, blue_side = positions[:, 0] > 0.2, positions[:, 0] < -0.2
+    assert (px[red_side, 0] > px[red_side, 2]).all()
+    assert (px[blue_side, 2] > px[blue_side, 0]).all()
+
+
+def test_bake_samples_a_uv_textured_source_the_right_way_up():
+    """Hunyuan3D's hy3dpaint output is UV-textured, not vertex-colored.
+    A texture split left/right (red/blue) and top/bottom (green/none) must
+    land on the matching sides of the baked model -- catches a flipped u
+    or v in the source sampler."""
+    pytest.importorskip("xatlas")
+    from printable.pipeline.bake import make_game_asset
+
+    mesh = trimesh.creation.icosphere(subdivisions=5)
+    x, y, z = mesh.vertices.T
+    uv = np.stack([np.arctan2(y, x) / (2 * np.pi) + 0.5, 0.5 + 0.5 * z], axis=1)
+    texture = np.zeros((64, 64, 3), dtype=np.uint8)
+    texture[:, :32, 0] = 220  # left half of the image (u < 0.5, i.e. y < 0): red
+    texture[:, 32:, 2] = 220  # right half (y > 0): blue
+    texture[:32, :, 1] = 200  # top rows are high v in trimesh's convention (z > 0): green
+    mesh.visual = trimesh.visual.TextureVisuals(uv=uv, image=Image.fromarray(texture))
+
+    asset = make_game_asset(mesh, max_faces=800, texture_size=256)
+    px = np.asarray(asset.base_color)[
+        np.clip((asset.uvs[:, 1] * 256).astype(int), 0, 255),
+        np.clip((asset.uvs[:, 0] * 256).astype(int), 0, 255),
+    ].astype(int)
+    _, vy, vz = asset.vertices.T
+    # Keep clear of the seam at u=0/1 and the quadrant borders.
+    left = (vy < -0.3) & (np.abs(vz) > 0.3)
+    right = (vy > 0.3) & (np.abs(vz) > 0.3)
+    assert (px[left, 0] > px[left, 2]).all()
+    assert (px[right, 2] > px[right, 0]).all()
+    top, bottom = (vz > 0.3) & (np.abs(vy) > 0.3), (vz < -0.3) & (np.abs(vy) > 0.3)
+    assert (px[top, 1] > 150).all()
+    assert (px[bottom, 1] < 50).all()
+
+
+def test_baked_normal_map_reconstructs_the_high_poly_surface(tmp_path):
+    """Decoding the normal map with the exported tangents -- exactly as the
+    glTF spec tells an engine to (bitangent = cross(normal, tangent) * w)
+    -- should give back the bumpy high-poly's normals on a smooth low-poly,
+    far closer than the low-poly's own normals do. Catches any mismatch
+    between the basis the map is baked in and the one it's decoded with."""
+    pytest.importorskip("xatlas")
+    from printable.pipeline.bake import export_glb, make_game_asset
+
+    source = trimesh.creation.icosphere(subdivisions=6)
+    theta = np.arctan2(source.vertices[:, 1], source.vertices[:, 0])
+    source.vertices *= (1.0 + 0.04 * np.sin(8 * theta))[:, None]
+    source.visual.vertex_colors = np.tile([180, 180, 180, 255], (len(source.vertices), 1))
+
+    asset = make_game_asset(source, max_faces=1500, texture_size=512)
+    out = tmp_path / "bumpy.glb"
+    export_glb(asset, out)
+    gltf, bin_chunk = _read_glb(out)
+    faces = _glb_attribute(gltf, bin_chunk, "indices").reshape(-1, 3)
+    pos = _glb_attribute(gltf, bin_chunk, "POSITION")
+    nrm = _glb_attribute(gltf, bin_chunk, "NORMAL")
+    tan = _glb_attribute(gltf, bin_chunk, "TANGENT")
+    uv = _glb_attribute(gltf, bin_chunk, "TEXCOORD_0")
+    nmap = _glb_image(gltf, bin_chunk, gltf["materials"][0]["normalTexture"]["index"])
+
+    def unit(v):
+        return v / np.linalg.norm(v, axis=1, keepdims=True)
+
+    # Sample each exported triangle at its centroid.
+    p = pos[faces].mean(axis=1)
+    n = unit(nrm[faces].mean(axis=1))
+    t = tan[faces][:, :, :3].mean(axis=1)
+    t = unit(t - n * (t * n).sum(axis=1, keepdims=True))
+    b = np.cross(n, t) * tan[faces[:, 0], 3:4]
+    st = uv[faces].mean(axis=1)
+    texel = nmap[
+        np.clip((st[:, 1] * 512).astype(int), 0, 511), np.clip((st[:, 0] * 512).astype(int), 0, 511)
+    ]
+    ts = texel / 255.0 * 2.0 - 1.0
+    decoded = unit(ts[:, :1] * t + ts[:, 1:2] * b + ts[:, 2:3] * n)
+
+    _, _, tri = trimesh.proximity.closest_point(source, p)
+    truth = source.face_normals[tri]
+
+    def mean_angle(a):
+        return np.degrees(np.arccos(np.clip((a * truth).sum(axis=1), -1, 1))).mean()
+
+    assert mean_angle(decoded) < 0.6 * mean_angle(n), (mean_angle(decoded), mean_angle(n))
+    assert mean_angle(decoded) < 8.0
+
+
+def test_game_asset_scale_z_squashes_only_that_axis(sample_image, monkeypatch):
+    """--opt scale_z=... (also scale_x/scale_y) is the only correction for a
+    single-image backend's guessed depth axis, since game_asset runs no
+    scale-to-mm/prep at all otherwise (see run.py's game_asset branch). It
+    should scale around the mesh's own centroid, changing only the given
+    axis's extent -- not translate the mesh, not touch the others.
+    """
+    pytest.importorskip("xatlas")
+
+    class _ColoredBackend(GeometryBackend):
+        name = "triposr"
+        requires_gpu = False
+
+        def generate(self, request: GenerationRequest) -> GenerationResult:
+            mesh = trimesh.creation.box(extents=[2, 3, 4])
+            mesh.apply_translation([5, -5, 5])  # off-origin, to catch a pivot bug
+            mesh.visual.vertex_colors = np.tile([200, 50, 50, 255], (len(mesh.vertices), 1))
+            return GenerationResult(mesh=mesh, backend=Backend.TRIPOSR, has_color=True)
+
+    monkeypatch.setitem(registry._factories, "triposr", _ColoredBackend)
+
+    baseline = run(sample_image, backend="triposr", game_asset=True)
+    squashed = run(sample_image, backend="triposr", game_asset=True, options={"scale_z": 0.5})
+
+    assert np.allclose(squashed.mesh.extents[:2], baseline.mesh.extents[:2])
+    assert squashed.mesh.extents[2] == pytest.approx(baseline.mesh.extents[2] * 0.5)
+    assert np.allclose(squashed.mesh.centroid, baseline.mesh.centroid, atol=1e-6)
+
+
+def test_game_asset_closes_holes(sample_image, tmp_path, monkeypatch):
+    """game_asset skips the print path's full repair ladder, but still runs
+    its cheap part (island removal + hole filling): a raw single-image
+    reconstruction routinely isn't watertight, and a hole ships as a
+    visible black gap in the engine otherwise."""
+    pytest.importorskip("xatlas")
+
+    def holey_box():
+        box = trimesh.creation.box()
+        mesh = trimesh.Trimesh(vertices=box.vertices, faces=box.faces[1:], process=False)
+        mesh.visual.vertex_colors = np.tile([200, 50, 50, 255], (len(mesh.vertices), 1))
+        return mesh
+
+    monkeypatch.setitem(registry._factories, "triposr", _colored_backend(holey_box))
+
+    out = tmp_path / "box.glb"
+    result = run(sample_image, backend="triposr", game_asset=True, output_path=out)
+
+    assert result.mesh.is_watertight
+    assert result.report.stats["watertight"] is True
+    gltf, bin_chunk = _read_glb(out)
+    base = _glb_image(gltf, bin_chunk, 0)
+    assert (base[..., 0] > 150).all(), "the patched face should be baked red too"
+
+
+def test_art_source_round_trip(sample_image, tmp_path, monkeypatch):
+    """--art-source keeps what's needed to reproduce or re-bake a model:
+    the reference image with its text-to-image settings still embedded, the
+    untouched raw mesh (loadable back as a colored bake source), and a
+    prompt.md recording prompt, seed and settings."""
+    pytest.importorskip("xatlas")
+    from printable.art_source import (
+        embed_image_params,
+        read_image_params,
+        write_for_result,
+    )
+    from printable.pipeline.bake import make_game_asset
+
+    params = {"prompt": "a bronze bell | chime", "negative_prompt": "floor, shadow", "seed": 1234,
+              "steps": 4, "cfg": 1.0, "width": 64, "height": 64, "mirrored": True}
+    image_path = tmp_path / "ref.png"
+    image_path.write_bytes(embed_image_params(sample_image.read_bytes(), params))
+    assert read_image_params(image_path) == params
+    assert read_image_params(sample_image) is None
+
+    monkeypatch.setitem(registry._factories, "triposr", _colored_backend(_half_red_half_blue_sphere))
+    result = run(image_path, backend="triposr", game_asset=True, game_asset_max_faces=500,
+                 game_asset_texture_size=128)
+
+    art = tmp_path / "relic_bell"
+    write_for_result(
+        art, result, image_path=image_path, image_params=read_image_params(image_path),
+        backend="triposr", seed=42, options={"scale_z": 0.5}, max_faces=500, texture_px=128,
+        model_name="relic_bell.glb",
+    )
+
+    assert read_image_params(art / "reference.png") == params
+    raw = trimesh.load(art / "raw.glb", force="mesh")
+    assert len(raw.faces) == 20480
+    make_game_asset(raw, max_faces=500, texture_size=64)  # re-bakes without error
+
+    md = (art / "prompt.md").read_text()
+    assert md.startswith("# relic_bell")
+    assert "a bronze bell | chime" in md  # prompts sit in code blocks, unescaped
+    assert "| Seed | 1234 |" in md
+    assert "left half mirrored onto right" in md
+    assert "--max-faces 500 --texture-size 128 --opt scale_z=0.5" in md
 
 
 def test_run_skips_glb_export_without_color(sample_image, tmp_path):
@@ -555,3 +857,27 @@ def test_check_dimension_targets_noop_on_empty_targets():
     check_dimension_targets(report, mesh, {}, tolerance_pct=15)
 
     assert report.issues == []
+
+
+def test_black_paint_is_rejected_not_shipped(tmp_path, monkeypatch):
+    """hy3dpaint can return an all-black texture without raising; that must
+    fail the job rather than ship a black model, save its multiview images,
+    and say which step lost the color. A dark but real texture passes."""
+    from printable.backends.ai import _check_paint
+
+    monkeypatch.chdir(tmp_path)
+
+    def textured(value):
+        mesh = trimesh.creation.box()
+        pixels = np.full((16, 16, 3), value, dtype=np.uint8)
+        mesh.visual = trimesh.visual.TextureVisuals(uv=np.zeros((8, 2)), image=Image.fromarray(pixels))
+        return mesh
+
+    black, green = Image.new("RGB", (8, 8), "black"), Image.new("RGB", (8, 8), (40, 160, 60))
+    with pytest.raises(RuntimeError, match="diffusion step failed"):
+        _check_paint(textured(0), views=[black, black], source=green)
+    with pytest.raises(RuntimeError, match="2 of 2 multiview images had color"):
+        _check_paint(textured(0), views=[green, green])
+    saved = sorted(p.name for p in (tmp_path / "output" / "hy3dpaint_debug").rglob("*.png"))
+    assert "source.png" in saved and "view_0.png" in saved
+    _check_paint(textured(40))  # dark lacquer is fine

@@ -6,6 +6,24 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from printable.comfyui_client import (
+    DEFAULT_CHECKPOINT,
+    DEFAULT_COMFYUI_URL,
+    DEFAULT_NEGATIVE_PROMPT,
+)
+
+
+class Txt2ImgRequest(BaseModel):
+    prompt: str
+    negative_prompt: str = DEFAULT_NEGATIVE_PROMPT
+    steps: int = 4
+    cfg: float = 1.0
+    width: int = 1024
+    height: int = 1024
+    seed: int | None = None
+    checkpoint: str = DEFAULT_CHECKPOINT
+    comfyui_url: str = DEFAULT_COMFYUI_URL
+
 
 class BackendInfo(BaseModel):
     name: str
@@ -37,3 +55,7 @@ class JobStatus(BaseModel):
     classification: dict[str, Any] | None = None
     has_glb: bool = False
     has_geometry_cues: bool = False
+    # True for a --game-asset job: output_path is itself a textured
+    # low-poly .glb (no STL at all), not print-checked -- see /api/jobs'
+    # game_asset param and README's "Game assets" section.
+    game_asset: bool = False

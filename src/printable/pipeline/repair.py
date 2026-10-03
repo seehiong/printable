@@ -183,6 +183,39 @@ def decimate(mesh: trimesh.Trimesh, max_faces: int) -> trimesh.Trimesh:
         return mesh
 
 
+def ensure_vertex_color_material(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """Attach a neutral white PBR material alongside vertex colors, in place.
+
+    A GLB with a COLOR_0 attribute but no material at all is spec-valid --
+    a conformant renderer treats a missing material as an implicit white
+    one and multiplies it by COLOR_0 regardless -- but not every real
+    engine implements that. trimesh's own GLB exporter only emits a
+    material when `mesh.visual` has a `.material` attribute at all, which
+    plain `ColorVisuals` (what a vertex-colored mesh normally carries)
+    never does, so the primitive ends up with no material entry whatsoever.
+    Godot's glTF importer, among others, only wires up "use vertex color as
+    albedo" while it's processing an actual material definition -- with
+    none present, it falls back to a flat, unlit white material and the
+    color never shows. A white baseColorFactor material fixes this without
+    changing anything anywhere it already looked right (white times a
+    color is that same color); a no-op for anything already texture-mapped
+    (already carries a real material) or uncolored. metallicFactor is set
+    explicitly because glTF's default is 1.0: left out, every engine
+    renders the mesh as dark polished metal.
+    """
+    if mesh.visual.kind not in ("vertex", "face"):
+        return mesh
+    vertex_colors = mesh.visual.vertex_colors
+    visual = trimesh.visual.texture.TextureVisuals(
+        material=trimesh.visual.material.PBRMaterial(
+            baseColorFactor=[1.0, 1.0, 1.0, 1.0], metallicFactor=0.0, roughnessFactor=0.8
+        )
+    )
+    visual.vertex_attributes = {"color": vertex_colors}
+    mesh.visual = visual
+    return mesh
+
+
 def _recover_from_decimation_damage(mesh: trimesh.Trimesh, aggressive: bool) -> trimesh.Trimesh:
     """Best-effort repair chain for a mesh decimation has just damaged.
 

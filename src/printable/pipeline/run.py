@@ -56,6 +56,11 @@ class PipelineResult:
     # output_path was None at generation time (export_winner() below fills
     # this in once a winner is picked and a real path is known).
     geometry_cue_paths: list[Path] = field(default_factory=list)
+    # game_asset only: the backend's colored output exactly as generated,
+    # before any cleanup, scaling or reduction. It's what the game model is
+    # baked from, so keeping it (art_source's raw.glb) allows re-baking at
+    # another budget later without regenerating.
+    raw_color_mesh: trimesh.Trimesh | None = None
     timings: dict[str, float] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -110,11 +115,24 @@ def run(
     seed: int = 42,
     skip_repair: bool = False,
     max_faces: int = 300_000,
+    game_asset: bool = False,
+    game_asset_max_faces: int = 3_500,
+    game_asset_texture_size: int = 1024,
     on_stage: Callable[[str, str], None] | None = None,
 ) -> PipelineResult:
-    """Run the full image-to-STL pipeline."""
+    """Run the full image-to-STL pipeline, or (game_asset=True) a shorter
+    image-to-GLB path for game/engine use instead of printing: no
+    scale-to-mm/base/hollow, no watertightness gate - the backend's colored
+    output reduced to game_asset_max_faces triangles with its color and
+    surface detail baked into a texture and normal map (pipeline/bake.py).
+    See "Game assets" in the README. Requires a backend that produces
+    color (triposr, hunyuan3d); `options["texture"]` is forced on
+    automatically.
+    """
     settings = settings or PrintSettings()
-    options = options or {}
+    options = dict(options or {})
+    if game_asset:
+        options.setdefault("texture", True)
     image_path = Path(image_path)
     if not image_path.exists():
         msg = f"image file not found: {image_path}"
@@ -191,6 +209,62 @@ def run(
         # backend attached color directly to `mesh` itself (TripoSR).
         color_mesh = result.color_mesh if result.color_mesh is not None else mesh
 
+    if game_asset:
+        if not result.has_color:
+            raise RuntimeError(
+                f"backend {backend!r} produced no color/texture - game_asset needs "
+                "triposr or hunyuan3d, which is where options['texture'] applies"
+            )
+        from printable.pipeline import bake
+
+        # scale_x/y/z (--opt, default 1.0): a single-image backend guesses
+        # the depth it never saw, and nothing downstream rescales a game
+        # asset, so this is the only correction. Which axis is "depth"
+        # isn't fixed across backends; trial and error, like --rotate.
+        axis_scale = (
+            float(options.get("scale_x", 1.0)),
+            float(options.get("scale_y", 1.0)),
+            float(options.get("scale_z", 1.0)),
+        )
+        with timer.stage("game-asset-bake"):
+            asset = bake.make_game_asset(
+                color_mesh,
+                max_faces=game_asset_max_faces,
+                texture_size=game_asset_texture_size,
+                axis_scale=axis_scale,
+            )
+
+        report = ValidationReport()
+        report.stats = {
+            "faces": len(asset.faces),
+            "raw_faces": len(color_mesh.faces),
+            "texture_px": game_asset_texture_size,
+            # Informational only: nothing gates on it, since an engine has
+            # no watertightness requirement. False means a hole was too
+            # large or irregular for hole filling and may still show.
+            "watertight": asset.watertight,
+        }
+
+        written = None
+        if output_path is not None:
+            with timer.stage("export"):
+                output_path = Path(output_path).with_suffix(".glb")
+                bake.export_glb(asset, output_path)
+                written = output_path
+                log.info("wrote %s", output_path)
+
+        return PipelineResult(
+            mesh=asset.mesh,
+            report=report,
+            output_path=written,
+            glb_path=None,
+            depth_normal=depth_normal,
+            geometry_cue_paths=geometry_cue_paths,
+            raw_color_mesh=color_mesh,
+            timings=timer.timings,
+            metadata={**result.metadata, "backend": backend, "game_asset": True},
+        )
+
     if not skip_repair:
         with timer.stage("repair"):
             # Heightmap-family meshes are built closed and their resolution is
@@ -223,6 +297,12 @@ def run(
         # and the boolean ops in the real repair/prep path would otherwise
         # silently strip.
         color_mesh_out = repair.basic_clean(color_mesh)
+        # basic_clean never touches color/material, but a vertex-colored
+        # mesh (TripoSR) still needs this: see ensure_vertex_color_material's
+        # own docstring for why a GLB with vertex colors and no material at
+        # all loads as flat white in Godot's glTF importer. No-op for a
+        # texture-mapped mesh (Hunyuan3D), which already carries a real one.
+        color_mesh_out = repair.ensure_vertex_color_material(color_mesh_out)
 
     written = None
     if output_path is not None:

@@ -13,6 +13,16 @@ came out watertight and single-body. Not worth the install-matrix cost
 explaining away every time. See docs/SETUP.md's history if reviving either
 is ever worth revisiting.
 
+Trellis2 and Pixal3D (ComfyUI's from-scratch, non-TRELLIS-v1
+reimplementations -- a genuinely different codebase, tried again because
+newer ROCm builds finally support gfx1151 cleanly) were evaluated the same
+way in 2026-09 and rejected for the identical reason: real test renders
+came back as 9,602 and 4,110 disconnected bodies respectively (largest
+single piece under 3% of the mesh either time), despite looking clean in
+a normal textured render -- topology damage like this doesn't show up
+visually, only in an actual watertight/body-count check. See ROADMAP.md's
+Infrastructure History for the full evaluation.
+
 Design note: every adapter converts to a plain trimesh.Trimesh as early as
 possible. Downstream stages never see model-specific types.
 """
@@ -145,6 +155,50 @@ def _to_trimesh(obj) -> trimesh.Trimesh:
         return x.detach().cpu().numpy() if hasattr(x, "detach") else np.asarray(x)
 
     return trimesh.Trimesh(vertices=arr(verts), faces=arr(faces), process=False)
+
+
+def _check_paint(painted: trimesh.Trimesh, views: list | None = None, source=None) -> None:
+    """Fail loudly if hy3dpaint came back with an empty (all-black) texture.
+
+    It does this without raising: the shape is fine, but every texel is
+    (0, 0, 0), and a black model then ships as if the job succeeded. Seen
+    only under `printable serve` with other models resident; never from a
+    fresh CLI process, and not caused by switching backends. A
+    genuinely dark object still has some highlight or shading above
+    near-zero, so an image whose brightest pixel is near-black is a failed
+    paint, not a dark material.
+    """
+    material = getattr(painted.visual, "material", None)
+    image = getattr(material, "baseColorTexture", None) or getattr(material, "image", None)
+    if image is None or int(np.asarray(image.convert("RGB")).max()) > 8:
+        return
+
+    from datetime import datetime, timezone
+
+    debug = Path("output") / "hy3dpaint_debug" / datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M%S")
+    debug.mkdir(parents=True, exist_ok=True)
+    if source is not None:
+        source.save(debug / "source.png")
+    for i, view in enumerate(views or []):
+        view.save(debug / f"view_{i}.png")
+    black_views = sum(int(np.asarray(v.convert("RGB")).max()) <= 8 for v in views or [])
+    if not views:
+        where = "no multiview images were recorded"
+    elif black_views == len(views):
+        where = "the multiview images were already black, so the diffusion step failed"
+    else:
+        where = f"{len(views) - black_views} of {len(views)} multiview images had color, so the bake lost them"
+    raise RuntimeError(f"{PAINT_FAILED} Diagnosis: {where}. Saved to {debug.resolve()}.")
+
+
+PAINT_FAILED = (
+    "hunyuan3d's texture painting (hy3dpaint) returned an all-black texture, "
+    "so the model would come out black; the shape itself generated fine. So "
+    "far it has only happened under printable serve while other models were "
+    "loaded (ComfyUI, a llama-server VLM); the same image painted correctly "
+    "from the CLI. Try again with those stopped, or run `printable generate "
+    "... -b hunyuan3d --game-asset`."
+)
 
 
 class Hunyuan3DBackend(GeometryBackend):
@@ -289,21 +343,40 @@ class Hunyuan3DBackend(GeometryBackend):
             mesh_path = tmp_dir / "shape.obj"
             mesh.export(mesh_path)
 
+            # Keep the alpha: hy3dpaint composites an RGBA prompt onto white
+            # itself. Flattened to RGB here, the cut-out background became
+            # black instead.
             image_path = tmp_dir / "source.png"
-            image.convert("RGB").save(image_path)
+            image.save(image_path)
 
+            # Record the multiview images hy3dpaint bakes from, so a black
+            # result can show whether the views were already black (the
+            # diffusion step) or the bake lost them.
+            views: list = []
+            bake = pipe.view_processor.bake_from_multiview
+
+            def recording_bake(images, *args, **kwargs):
+                views.append([im.copy() for im in images])
+                return bake(images, *args, **kwargs)
+
+            pipe.view_processor.bake_from_multiview = recording_bake
             output_path = tmp_dir / "textured.obj"
-            pipe(
-                mesh_path=str(mesh_path),
-                image_path=str(image_path),
-                output_mesh_path=str(output_path),
-                # Blender's bpy has no wheel for this venv's Python (see
-                # docs/SETUP.md), so hy3dpaint's own OBJ->GLB step always
-                # silently no-ops -- trimesh below does that conversion
-                # for real instead, so don't bother asking hy3dpaint for it.
-                save_glb=False,
-            )
-            return trimesh.load(output_path, force="mesh")
+            try:
+                pipe(
+                    mesh_path=str(mesh_path),
+                    image_path=str(image_path),
+                    output_mesh_path=str(output_path),
+                    # Blender's bpy has no wheel for this venv's Python (see
+                    # docs/SETUP.md), so hy3dpaint's own OBJ->GLB step always
+                    # silently no-ops -- trimesh below does that conversion
+                    # for real instead, so don't bother asking hy3dpaint for it.
+                    save_glb=False,
+                )
+            finally:
+                pipe.view_processor.bake_from_multiview = bake
+            painted = trimesh.load(output_path, force="mesh")
+        _check_paint(painted, views=views[0] if views else [], source=image)
+        return painted
 
     def warmup(self) -> None:
         self._load(self.DEFAULT_MODEL, None)

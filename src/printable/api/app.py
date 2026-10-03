@@ -7,12 +7,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from printable.api.jobs import Job, store
-from printable.api.schemas import BackendInfo, JobStatus, JobSubmitResponse
+from printable.api.schemas import BackendInfo, JobStatus, JobSubmitResponse, Txt2ImgRequest
 from printable.backends.base import registry
 from printable.options import parse_options
 from printable.types import PrintSettings
@@ -21,6 +21,25 @@ from printable.vlm_client import DEFAULT_VLM_URL
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+class _NoCacheStaticFiles(StaticFiles):
+    """StaticFiles, but every response tells the browser to revalidate.
+
+    This serves the browser UI itself, actively edited during development.
+    Starlette's default (Last-Modified/ETag, no Cache-Control) lets a
+    browser satisfy a plain reload straight from its own cache without
+    ever asking the server again -- so after an edit, a normal reload
+    (not a hard refresh) can silently keep running the old index.html/JS,
+    which has caused real confusion (a feature or fix looking broken when
+    it's actually just not loaded yet). no-cache still allows a fast 304
+    on an unchanged file; it just makes every load actually ask first.
+    """
+
+    async def get_response(self, path: str, scope) -> Any:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 def _extract_spec_views(job: Job, sheet_path: Path, *, vlm_url: str) -> None:
@@ -214,6 +233,42 @@ def create_app() -> FastAPI:
             )
         return out
 
+    @app.post("/api/txt2img")
+    def txt2img(body: Txt2ImgRequest) -> Response:
+        """Text description -> PNG via a running ComfyUI server (see
+        README's "Text to image" section). Synchronous, not a tracked job:
+        SDXL Turbo generation is a few seconds once the model is loaded, so
+        there's no progress stream to show -- the browser just awaits the
+        response. The image isn't handed to the pipeline here; the UI's
+        "Use this image" button feeds the returned PNG into the normal
+        upload flow below, unchanged.
+        """
+        from printable.comfyui_client import generate_image
+
+        try:
+            image = generate_image(
+                body.prompt,
+                negative_prompt=body.negative_prompt,
+                steps=body.steps,
+                cfg=body.cfg,
+                width=body.width,
+                height=body.height,
+                seed=body.seed,
+                checkpoint=body.checkpoint,
+                comfyui_url=body.comfyui_url,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        # The settings are embedded in the PNG too, but the browser can't
+        # read text chunks easily, and a client-side mirror re-encodes the
+        # image without them. json.dumps' default ASCII escaping keeps a
+        # non-Latin prompt legal as a header value.
+        return Response(
+            content=image.png,
+            media_type="image/png",
+            headers={"X-Printable-Params": json.dumps(image.params)},
+        )
+
     @app.post("/api/jobs", status_code=202)
     async def submit_job(
         image: UploadFile,
@@ -224,6 +279,9 @@ def create_app() -> FastAPI:
         add_base: bool = Form(True),
         max_faces: int = Form(300_000),
         skip_repair: bool = Form(False),
+        game_asset: bool = Form(False),
+        game_asset_max_faces: int = Form(3_500),
+        game_asset_texture_size: int = Form(1024),
         opt: list[str] = Form(default=[]),  # noqa: B008 - FastAPI's own Form() idiom
     ) -> JobSubmitResponse:
         if backend not in registry.names():
@@ -238,7 +296,7 @@ def create_app() -> FastAPI:
         image_path = job.dir / f"input{suffix}"
         image_path.write_bytes(await image.read())
         job.image_path = image_path
-        job.output_path = job.dir / "result.stl"
+        job.output_path = job.dir / ("result.glb" if game_asset else "result.stl")
 
         def _generate() -> Any:
             from printable.pipeline.run import run
@@ -252,6 +310,9 @@ def create_app() -> FastAPI:
                 seed=seed,
                 skip_repair=skip_repair,
                 max_faces=max_faces,
+                game_asset=game_asset,
+                game_asset_max_faces=game_asset_max_faces,
+                game_asset_texture_size=game_asset_texture_size,
                 on_stage=job.on_stage,
             )
 
@@ -492,12 +553,18 @@ def create_app() -> FastAPI:
         issues = None
         has_glb = False
         has_geometry_cues = False
+        game_asset = False
         if job.status == "done" and job.result is not None:
             report = job.result.report
             printable = report.printable
             stats = report.stats
             issues = [str(i) for i in report.issues]
-            has_glb = bool(job.result.glb_path)
+            game_asset = bool(job.result.metadata.get("game_asset"))
+            # A game-asset job's one deliverable IS the GLB (job.output_path
+            # itself, not a preview alongside an STL) -- glb_path stays None
+            # in that case (see pipeline/run.py's game_asset branch), so
+            # has_glb has to check metadata too, not just glb_path.
+            has_glb = bool(job.result.glb_path) or game_asset
             has_geometry_cues = bool(job.result.geometry_cue_paths)
         return JobStatus(
             id=job.id,
@@ -512,6 +579,7 @@ def create_app() -> FastAPI:
             classification=job.classification,
             has_glb=has_glb,
             has_geometry_cues=has_geometry_cues,
+            game_asset=game_asset,
         )
 
     @app.get("/api/jobs/{job_id}/view/{name}")
@@ -536,6 +604,11 @@ def create_app() -> FastAPI:
         job = store.get(job_id)
         if job.status != "done":
             raise HTTPException(status_code=409, detail=f"job is {job.status}, not done")
+        if job.result is not None and job.result.metadata.get("game_asset"):
+            raise HTTPException(
+                status_code=409,
+                detail="this is a game-asset job -- it produced a .glb, not an STL; see /glb",
+            )
         if job.output_path is None:
             raise HTTPException(status_code=409, detail="job produced no mesh (see classification)")
         return FileResponse(job.output_path, media_type="model/stl", filename="result.stl")
@@ -545,10 +618,24 @@ def create_app() -> FastAPI:
         job = store.get(job_id)
         if job.status != "done":
             raise HTTPException(status_code=409, detail=f"job is {job.status}, not done")
-        glb_path = job.result.glb_path if job.result is not None else None
+        if job.result is None:
+            raise HTTPException(status_code=404, detail="this job did not produce a GLB")
+        # A game-asset job's output_path IS the GLB (see pipeline/run.py);
+        # glb_path is only ever set for the STL path's separate colored
+        # preview alongside a print-ready mesh.
+        glb_path = job.output_path if job.result.metadata.get("game_asset") else job.result.glb_path
         if glb_path is None:
             raise HTTPException(status_code=404, detail="this job did not produce a GLB")
         return FileResponse(glb_path, media_type="model/gltf-binary", filename="result.glb")
+
+    @app.get("/api/jobs/{job_id}/reference")
+    def job_reference(job_id: str):
+        """The image a job was generated from, e.g. to keep beside a game
+        model as its reference."""
+        job = store.get(job_id)
+        if job.image_path is None or not job.image_path.exists():
+            raise HTTPException(status_code=404, detail="this job has no reference image")
+        return FileResponse(job.image_path, filename=f"reference{job.image_path.suffix}")
 
     def _geometry_cue_path(job_id: str, suffix: str) -> Path:
         job = store.get(job_id)
@@ -571,6 +658,6 @@ def create_app() -> FastAPI:
         return FileResponse(_geometry_cue_path(job_id, "_normal.png"), media_type="image/png")
 
     if STATIC_DIR.exists():
-        app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+        app.mount("/", _NoCacheStaticFiles(directory=STATIC_DIR, html=True), name="static")
 
     return app

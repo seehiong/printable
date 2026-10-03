@@ -228,6 +228,59 @@ def test_job_stream_emits_export_glb_stage_for_colored_backend(client, sample_im
     assert resp.content[:4] == b"glTF"
 
 
+def test_game_asset_job_serves_model_and_reference_image(client, sample_image, monkeypatch):
+    """A game-asset job's downloads are the textured GLB (no STL) and the
+    reference image it was made from, byte for byte. CPU-only: a fake
+    colored backend stands in for triposr."""
+    import numpy as np
+
+    from printable.backends.base import GeometryBackend, registry
+    from printable.types import Backend, GenerationRequest, GenerationResult
+
+    class _Colored(GeometryBackend):
+        name = "triposr"
+        requires_gpu = False
+
+        def generate(self, request: GenerationRequest) -> GenerationResult:
+            mesh = trimesh.creation.icosphere(subdivisions=3)
+            mesh.visual.vertex_colors = np.tile([200, 50, 50, 255], (len(mesh.vertices), 1))
+            return GenerationResult(mesh=mesh, backend=Backend.TRIPOSR, has_color=True)
+
+    monkeypatch.setitem(registry._factories, "triposr", _Colored)
+    job_id = _submit(
+        client, sample_image, backend="triposr", game_asset="true",
+        game_asset_max_faces="300", game_asset_texture_size="128",
+    )
+    status = _wait_for_terminal(client, job_id)
+    assert status["status"] == "done", status
+    assert status["game_asset"] is True
+    assert status["stats"]["faces"] <= 300
+
+    assert client.get(f"/api/jobs/{job_id}/glb").content[:4] == b"glTF"
+    resp = client.get(f"/api/jobs/{job_id}/reference")
+    assert resp.status_code == 200
+    assert resp.content == sample_image.read_bytes()
+
+
+def test_txt2img_returns_settings_header(client, monkeypatch):
+    """The browser can't read PNG text chunks, and a client-side mirror
+    re-encodes the image without them, so the settings (seed above all)
+    also come back as a header for the UI to show and pass along."""
+    from printable import comfyui_client
+
+    def fake_generate_image(prompt, **kw):
+        params = {"prompt": prompt, "seed": 4242}
+        buf = io.BytesIO()
+        Image.new("RGB", (8, 8), "white").save(buf, format="PNG")
+        return comfyui_client.GeneratedImage(png=buf.getvalue(), params=params)
+
+    monkeypatch.setattr(comfyui_client, "generate_image", fake_generate_image)
+    resp = client.post("/api/txt2img", json={"prompt": "青铜 bell"})
+    assert resp.status_code == 200
+    params = json.loads(resp.headers["X-Printable-Params"])
+    assert params == {"prompt": "青铜 bell", "seed": 4242}
+
+
 # Deliberately only one real-GPU-backend test in this file. Loading a
 # second real GPU backend (a since-dropped one, while triposr's above was
 # already loaded) in the same process hung this entire machine hard enough

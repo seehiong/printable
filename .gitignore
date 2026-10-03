@@ -16,3 +16,6 @@ ci.stl
 # Derived panels: regenerate with `printable split`, no need to commit.
 assets/examples/*_panels/
 assets/examples/panels/
+
+# Web UI runtime scratch, not part of the repo.
+uploads/
